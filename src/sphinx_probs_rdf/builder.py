@@ -6,7 +6,6 @@ from sphinx.builders import Builder
 from sphinx.locale import __
 
 from sphinx.util import logging
-
 logger = logging.getLogger(__name__)
 
 

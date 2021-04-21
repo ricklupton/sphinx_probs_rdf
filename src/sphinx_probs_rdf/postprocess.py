@@ -1,12 +1,12 @@
 """Post-processing operations on the RDF graph."""
 
-from rdflib import Graph
-from rdflib.namespace import RDF
+from rdflib import Graph  # type: ignore
+from rdflib.namespace import RDF  # type: ignore
+
+from .directives import PROBS  # type: ignore
 
 from sphinx.util import logging
 logger = logging.getLogger(__name__)
-
-from .directives import PROBS
 
 
 def postprocess(graph: Graph):
