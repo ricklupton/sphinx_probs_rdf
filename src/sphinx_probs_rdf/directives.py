@@ -275,8 +275,10 @@ class Process(SystemObjectDescription):
         g.add((uri, RDF.type, PROBS.Process))
         if "label" in self.options:
             g.add((uri, RDFS.label, Literal(self.options["label"])))
+            g.add((uri, PROBS.processName, Literal(self.options["label"])))
         else:
             g.add((uri, RDFS.label, Literal(uri_str)))
+            g.add((uri, PROBS.processName, Literal(uri_str)))
 
         # ComposedOf relationships
         if self.env.probs_parent:
@@ -358,8 +360,10 @@ class Object(SystemObjectDescription):
         g.add((uri, RDF.type, PROBS.Object))
         if "label" in self.options:
             g.add((uri, RDFS.label, Literal(self.options["label"])))
+            g.add((uri, PROBS.objectName, Literal(self.options["label"])))
         else:
             g.add((uri, RDFS.label, Literal(uri_str)))
+            g.add((uri, PROBS.objectName, Literal(uri_str)))
 
         if "parent_object" in self.options:
             parent_uri = getattr(self.SYS, self.options["parent_object"])
