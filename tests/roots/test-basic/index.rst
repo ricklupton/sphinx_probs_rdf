@@ -16,6 +16,3 @@ test-basic
 
 .. system:process:: AnotherParentOfP1P2
     :composed_of: *ParentOfP1P2
-
-.. system:process:: ErrorMissingProcess
-    :composed_of: *Missing

@@ -1,3 +1,4 @@
+import logging
 from rdflib import Graph, Namespace
 from rdflib.namespace import RDF
 import pytest
@@ -21,13 +22,3 @@ def test_postprocess_composed_of_children():
         (SYS.P2, PROBS.processComposedOf, SYS.P1b),
     }
     assert set(graph.triples((SYS.P2, PROBS.processComposedOfChildrenOf, None))) == set()
-
-
-def test_postprocess_composed_of_children_error(caplog):
-    graph = Graph()
-    graph.add((SYS.P1, PROBS.processComposedOf, SYS.P1a))
-    graph.add((SYS.P1, PROBS.processComposedOf, SYS.P1b))
-    graph.add((SYS.P2, PROBS.processComposedOfChildrenOf, SYS.missing))
-
-    postprocess_composed_of_children(graph)
-    assert f'Requested child "{SYS.missing}" of "{SYS.P2}" is not a Process' in caplog.text

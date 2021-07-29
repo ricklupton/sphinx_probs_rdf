@@ -6,12 +6,16 @@ from sphinx_probs_rdf.directives import PROBS
 
 SYS = Namespace("http://example.org/system/")
 
-
 @pytest.mark.sphinx(
     'probs_rdf', testroot='basic',
     confoverrides={'probs_rdf_system_prefix': str(SYS)})
 def test_probs_rdf_builder(app, status, warning):
     app.builder.build_all()
+
+    # assert "build succeeded" in status.getvalue()
+    warnings = warning.getvalue().strip()
+    assert warnings == ""
+
     g = Graph()
     g.parse(app.outdir / 'output.ttl', format='ttl')
     print((app.outdir / 'output.ttl').read_text())

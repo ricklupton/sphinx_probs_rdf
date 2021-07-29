@@ -1,10 +1,11 @@
 from collections import defaultdict
 from typing import Any, List
+import re
 
 from docutils import nodes
 from docutils.nodes import Node
 from docutils.parsers.rst import directives
-from rdflib import Graph, Literal, Namespace  # type: ignore
+from rdflib import Graph, Literal, BNode, Namespace  # type: ignore
 from rdflib.namespace import RDF, RDFS  # type: ignore
 from sphinx import addnodes
 from sphinx.directives import ObjectDescription
@@ -13,6 +14,118 @@ from sphinx.roles import XRefRole
 from sphinx.util.docfields import DocFieldTransformer
 from sphinx.util.docutils import SphinxDirective
 from sphinx.util.nodes import make_refnode
+from sphinx.util import logging
+logger = logging.getLogger(__name__)
+
+import yaml
+
+
+def parse_composed_of(value):
+    """Parse composed_of option."""
+    if value is None:
+        return []
+    return [x.strip() for x in value.split()]
+
+
+def parse_consumes_or_produces(value):
+    """Parse consumes and products options."""
+    if value is None:
+        return []
+
+    if "\n" in value or value.strip().startswith("{"):
+        # Complex definitions, one per line -- or a single YAML-style definition
+        items = [_parse_item(x.strip()) for x in value.strip().split("\n")]
+    else:
+        # A space-separated list of basic names
+        items = [
+            {"object": x.strip()}
+            for x in value.split()
+        ]
+
+    return items
+
+
+ITEM_STRING_REGEX = re.compile(r"""
+    ^\s*
+    ([^= \t]+)               # -> Object type
+    \s*
+    (?:                      # Optional amount section
+        =
+        \s*
+        ([0-9.eE-]+)         # -> Amount
+        (?:                  # Optional unit section
+            \s*
+            ([^{]+?)         # -> Unit
+            \s*
+        )?
+    )?
+    ({.+})?                  # Optional YAML section
+    $
+""", re.VERBOSE)
+
+
+def _parse_item(item):
+    if isinstance(item, str):
+        match = ITEM_STRING_REGEX.match(item)
+        if match:
+            extra = {}
+            if match.group(4):
+                try:
+                    extra = yaml.safe_load(match.group(4))
+                except yaml.YAMLError:
+                    pass
+            return {
+                "object": match.group(1),
+                "amount": float(match.group(2)) if match.group(2) else None,
+                "unit": match.group(3),
+                **extra,
+            }
+        else:
+            # Try parsing whole thing as yaml dict
+            try:
+                d = yaml.safe_load(item)
+                if not isinstance(d, dict):
+                    raise ValueError("YAML data should be dictionary")
+                return d
+            except yaml.YAMLError:
+                pass
+
+            return item
+    elif isinstance(item, list):
+        return {
+            "object": item[0],
+            "amount": item[1],
+            "unit": item[2],
+        }
+    elif isinstance(item, dict):
+        return item
+    else:
+        raise ValueError("cannot parse item: %r" % item)
+
+
+def expand_consumes_produces_amounts(defs, *items):
+    """Expand Python expressions in cleaned-up options."""
+    defs_ns = {}
+    exec(defs, defs_ns)
+
+    # Expand amounts in produces/consumes lists using the defs
+    result = [
+        [eval_amount(x, defs_ns) for x in item_list]
+        for item_list in items
+    ]
+
+    return result
+
+
+def eval_amount(item, namespace):
+    """Evaluate expressions within the "amount" field of the item.
+
+    WARNING: not safe for use with untrusted input!
+    """
+    if isinstance(item, dict) and isinstance(item.get("amount"), str):
+        amount = eval(item["amount"], {}, dict(namespace))
+        return {**item, "amount": amount}
+    return item
 
 
 class TTL(SphinxDirective):
@@ -104,6 +217,8 @@ class EndSubObjectsDirective(SphinxDirective):
 
 
 PROBS = Namespace("https://ukfires.org/probs/ontology/")
+PROBS_RECIPE = Namespace("https://ukfires.org/probs/ontology/recipe/")
+QUANTITYKIND = Namespace("http://qudt.org/vocab/quantitykind/")
 
 
 def remove_ns(ns, uri):
@@ -224,18 +339,19 @@ class Process(SystemObjectDescription):
     option_spec = {
         "label": directives.unchanged_required,
         "become_parent": directives.flag,
-        "consumes": directives.unchanged,
-        "produces": directives.unchanged,
-        "composed_of": directives.unchanged,
+        "consumes": parse_consumes_or_produces,
+        "produces": parse_consumes_or_produces,
+        "composed_of": parse_composed_of,
+        "defs": directives.unchanged,
     }
     signature_prefix = "Process: "
 
     def transform_content(self, contentnode):
         if "consumes" in self.options:
-            text = f"Consumes: {self.options['consumes']}"
+            text = "Consumes: " + " ".join(obj["object"] for obj in self.options['consumes'])
             contentnode += nodes.paragraph(text, text)
         if "produces" in self.options:
-            text = f"Produces: {self.options['produces']}"
+            text = "Produces: " + " ".join(obj["object"] for obj in self.options['produces'])
             contentnode += nodes.paragraph(text, text)
         if hasattr(self.env, "probs_parent") and self.env.probs_parent:
             text = f"Parent: {self.env.probs_parent[-1]}"
@@ -254,8 +370,8 @@ class Process(SystemObjectDescription):
             recipes = self.env.get_domain("system")
             recipes.add_process(
                 sig,
-                self.options.get("consumes", "").split(),
-                self.options.get("produces", "").split(),
+                self.options.get("consumes", []),
+                self.options.get("produces", []),
             )
 
     def define_graph(self, uri_str):
@@ -263,6 +379,7 @@ class Process(SystemObjectDescription):
             g = Graph()
             g.bind("sys", self.SYS)
             g.bind("probs", PROBS)
+            g.bind("rec", PROBS_RECIPE)
             self.env.probs_graph = g
         else:
             g = self.env.probs_graph
@@ -283,7 +400,7 @@ class Process(SystemObjectDescription):
         # ComposedOf relationships
         if self.env.probs_parent:
             g.add((self.env.probs_parent[-1], PROBS.processComposedOf, uri))
-        for child in self.options.get("composed_of", "").split():
+        for child in self.options.get("composed_of", []):
             if child.startswith("*"):
                 # include children of the named process -- this is expanded
                 # later as a postprocessing step once all processes are defined.
@@ -293,17 +410,46 @@ class Process(SystemObjectDescription):
                 child_uri = self.SYS[child]
                 g.add((uri, PROBS.processComposedOf, child_uri))
 
-        for obj in self.options.get("consumes", "").split():
-            obj_uri = getattr(self.SYS, obj)
-            g.add((uri, PROBS.consumes, obj_uri))
+        # Recipes (inputs and outputs)
+        # First expand any expressions
+        defs = self.options.get("defs", "")
+        consumes, produces = expand_consumes_produces_amounts(
+            defs, self.options.get("consumes", []), self.options.get("produces", []))
 
-        for obj in self.options.get("produces", "").split():
-            obj_uri = getattr(self.SYS, obj)
-            g.add((uri, PROBS.produces, obj_uri))
+        recipe_consumes, recipe_produces = [], []
+        _process_inputs_outputs(g, self.SYS, uri, "consumes", consumes, recipe_consumes)
+        _process_inputs_outputs(g, self.SYS, uri, "produces", produces, recipe_produces)
+        if recipe_consumes or recipe_produces:
+            recipe = BNode()
+            g.add((uri, PROBS_RECIPE.hasRecipe, recipe))
+            for item in recipe_consumes:
+                g.add((recipe, PROBS.consumes, item))
+            for item in recipe_produces:
+                g.add((recipe, PROBS.produces, item))
 
         if "become_parent" in self.options:
             # print("xxx become parent")
             self.env.probs_parent.append(uri)
+
+
+def _process_inputs_outputs(g, SYS, uri, relation, objects, recipe_items):
+    for obj in objects:
+        obj_uri = getattr(SYS, obj["object"])
+        g.add((uri, PROBS[relation], obj_uri))
+
+        if "amount" in obj:
+            # Have a recipe
+
+            # XXX only support kg for now
+            if "unit" in obj and obj["unit"] != "kg":
+                logger.error("Unsupported unit %r for object %r in recipe for %r",
+                             obj["unit"], obj["object"], uri)
+
+            item = BNode()
+            g.add((item, PROBS_RECIPE.object, obj_uri))
+            g.add((item, PROBS_RECIPE.quantity, Literal(obj["amount"])))
+            g.add((item, PROBS_RECIPE.metric, QUANTITYKIND.Mass))
+            recipe_items.append(item)
 
 
 class Object(SystemObjectDescription):
@@ -401,18 +547,18 @@ class ObjectIndex(Index):
         # flip from recipe_ingredients to ingredient_recipes
         for process_name, objs in process_consumes.items():
             for obj in objs:
-                if ("object." + obj) not in objects:
+                if ("object." + obj["object"]) not in objects:
                     msg = "WARNING: Object {} consumed by process {} is not defined"
-                    print(msg.format(obj, process_name))
+                    print(msg.format(obj["object"], process_name))
                     continue
-                object_processes[obj].append((process_name, "consumed"))
+                object_processes[obj["object"]].append((process_name, "consumed"))
         for process_name, objs in process_produces.items():
             for obj in objs:
-                if ("object." + obj) not in objects:
+                if ("object." + obj["object"]) not in objects:
                     msg = "WARNING: Object {} produced by process {} is not defined"
-                    print(msg.format(obj, process_name))
+                    print(msg.format(obj["object"], process_name))
                     continue
-                object_processes[obj].append((process_name, "produced"))
+                object_processes[obj["object"]].append((process_name, "produced"))
 
         # convert the mapping of objects to processes to produce the expected
         # output, shown below, using the object name as a key to group
