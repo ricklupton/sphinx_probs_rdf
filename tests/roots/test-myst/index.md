@@ -2,6 +2,15 @@
 
 This tests the YAML input of process recipes.
 
+```{system:object} Apples
+```
+
+```{system:object} Blackberries
+```
+
+```{system:object} Crumble
+```
+
 ```{system:process} P1
 ---
 consumes: |

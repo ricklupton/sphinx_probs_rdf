@@ -13,9 +13,8 @@ def test_probs_rdf_builder(app, status, warning):
     content = (app.outdir / "index.html").read_text()
     print(content)
 
-    assert """<div class="toggle process nested-0 system admonition">
-<p class="admonition-title" id="process-P1"><em>Process: </em><code class="sig-name descname">P1</code><em> / Making crumble</em></p>
-<p><p>Consumes: Apples Blackberries</p>
-<p>Produces: Crumble</p>
-</p>
-</div>""" in content
+    assert """<div class="toggle process nested-1 system admonition">
+<p class="admonition-title" id="process-P1"><em>Process: </em><code class="sig-name descname">P1</code><em> / Making crumble</em></p>""" in content
+
+    assert """
+<p>Parent: <a class="reference internal" href="#process-ParentOfP1P2" title="process-ParentOfP1P2"><span>ParentOfP1P2</span></a></p>""" in content

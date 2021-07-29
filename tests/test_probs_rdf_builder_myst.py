@@ -39,3 +39,30 @@ def test_probs_rdf_builder(app, status, warning):
                     for item in consumes_items}
         assert consumes == {(SYS.Apples, 0.7), (SYS.Blackberries, 0.3)}
         assert produces == {(SYS.Crumble, 1.0)}
+
+
+@pytest.mark.sphinx(
+    'html', testroot='myst',
+    confoverrides={'probs_rdf_system_prefix': str(SYS)})
+def test_recipe_output(app, status, warning):
+    app.builder.build_all()
+    content = (app.outdir / "index.html").read_text()
+    print(content)
+
+    assert """
+<p>Consumes: </p>
+<table class="colwidths-auto docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><code class="docutils literal notranslate"><span class="pre">Object</span></code></th>
+<th class="head"><code class="docutils literal notranslate"><span class="pre">Amount</span></code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><a class="reference internal" href="#object-Apples" title="object-Apples"><span>Apples</span></a></p></td>
+<td><code class="docutils literal notranslate"><span class="pre">0.7</span> <span class="pre">kg</span></code></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#object-Blackberries" title="object-Blackberries"><span>Blackberries</span></a></p></td>
+<td><code class="docutils literal notranslate"><span class="pre">0.3</span> <span class="pre">kg</span></code></td>
+</tr>
+</tbody>
+</table>""" in content

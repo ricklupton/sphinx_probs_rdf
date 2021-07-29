@@ -1,6 +1,9 @@
 test-basic
 ==========
 
+.. system:process:: ParentOfP1P2
+    :become_parent:
+
 .. system:process:: P1
     :consumes: Apples Blackberries
     :produces: Crumble
@@ -11,8 +14,10 @@ test-basic
     :produces: BlackberryFool
     :label: Making blackberry fool
 
-.. system:process:: ParentOfP1P2
-    :composed_of: P1 P2
+.. end-sub-processes::
 
 .. system:process:: AnotherParentOfP1P2
     :composed_of: *ParentOfP1P2
+
+    TODO: This does not show up as a parent currently because it's only added
+    later.

@@ -347,15 +347,43 @@ class Process(SystemObjectDescription):
     signature_prefix = "Process: "
 
     def transform_content(self, contentnode):
-        if "consumes" in self.options:
-            text = "Consumes: " + " ".join(obj["object"] for obj in self.options['consumes'])
-            contentnode += nodes.paragraph(text, text)
-        if "produces" in self.options:
-            text = "Produces: " + " ".join(obj["object"] for obj in self.options['produces'])
-            contentnode += nodes.paragraph(text, text)
+        # XXX Should refactor this to reduce duplication and/or read from the
+        # graph
+        defs = self.options.get("defs", "")
+        consumes, produces = expand_consumes_produces_amounts(
+            defs, self.options.get("consumes", []), self.options.get("produces", []))
+
+        if consumes:
+            contentnode += nodes.paragraph("Consumes: ", "Consumes: ")
+            contentnode += self._recipe_table(consumes)
+        if produces:
+            contentnode += nodes.paragraph("Produces: ", "Produces: ")
+            contentnode += self._recipe_table(produces)
         if hasattr(self.env, "probs_parent") and self.env.probs_parent:
-            text = f"Parent: {self.env.probs_parent[-1]}"
-            contentnode += nodes.paragraph(text, text)
+            _, _, parent_id = self.env.probs_parent[-1].rpartition("/")
+            p = nodes.paragraph("", "Parent: ")
+            p += self._system_id_link(parent_id)
+            contentnode += p
+
+    def _system_id_link(self, sys_id, within=None):
+        refnode = addnodes.pending_xref('', refdomain="system", refexplicit=False,
+                                        reftype="ref", reftarget=sys_id)
+        refnode += nodes.inline(sys_id, sys_id)
+        if within is not None:
+            wrapper = within("", "")
+            wrapper += refnode
+            return wrapper
+        return refnode
+
+    def _recipe_table(self, objects):
+        header_rows = [[nodes.literal("", "Object"), nodes.literal("", "Amount")]]
+        table_data = [
+            [self._system_id_link(obj["object"], nodes.paragraph),
+             nodes.literal("", "%.1f %s" % (obj["amount"], obj["unit"]))
+             if "amount" in obj else ""]
+            for obj in objects
+        ]
+        return build_table_from_list(header_rows + table_data, header_rows=1)
 
     def get_nesting_depth(self):
         if hasattr(self.env, "probs_parent"):
@@ -646,9 +674,10 @@ class SystemDomain(Domain):
             todocname = match[0][0]
             targ = match[0][1]
 
+            # print("system domain: found %s %s %r xref" % (todocname, targ, target))
             return make_refnode(builder, fromdocname, todocname, targ, contnode, targ)
         else:
-            print("Awww, found nothing")
+            print("system domain: found nothing for %r xref" % target)
             return None
 
     def add_process(self, signature, consumes, produces):
@@ -674,3 +703,56 @@ class SystemDomain(Domain):
         self.data["objects"].append(
             (name, signature, "Object", self.env.docname, anchor, 0)
         )
+
+
+# Adapted from docutils ListTable directive
+def build_table_from_list(table_data,
+                          # col_widths,
+                          header_rows, stub_columns=0, widths="auto"):
+    """
+    :param table_data: list of lists giving table data
+    :param header_rows: list of header rows
+    :param stub_columns: number of columns to mark as "stubs"
+    """
+
+    table = nodes.table()
+
+    max_cols = len(table_data[0])
+    col_widths = [100 // max_cols] * max_cols
+    # if widths == 'auto':
+    #     table['classes'] += ['colwidths-auto']
+    # elif widths: # "grid" or list of integers
+    #     table['classes'] += ['colwidths-given']
+    table['classes'] += ['colwidths-auto']
+
+    tgroup = nodes.tgroup(cols=max_cols)
+    table += tgroup
+
+    for col_width in col_widths:
+        colspec = nodes.colspec()
+        # if col_width is not None:
+        #     colspec.attributes['colwidth'] = col_width
+        if stub_columns:
+            colspec.attributes['stub'] = 1
+            stub_columns -= 1
+        tgroup += colspec
+
+    rows = []
+    for row in table_data:
+        row_node = nodes.row()
+        for cell in row:
+            entry = nodes.entry()
+            entry += cell
+            row_node += entry
+        rows.append(row_node)
+
+    if header_rows:
+        thead = nodes.thead()
+        thead.extend(rows[:header_rows])
+        tgroup += thead
+
+    tbody = nodes.tbody()
+    tbody.extend(rows[header_rows:])
+    tgroup += tbody
+
+    return table
