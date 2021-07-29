@@ -14,24 +14,25 @@ from .directives import (
 
 
 NB_RENDER_PRIORITY = {
-  "probs_rdf": (
-            "application/vnd.jupyter.widget-view+json",
-            "application/javascript",
-            "text/html",
-            "image/svg+xml",
-            "image/png",
-            "image/jpeg",
-            "text/markdown",
-            "text/latex",
-            "text/plain",
-        )
+    "probs_rdf": (
+        "application/vnd.jupyter.widget-view+json",
+        "application/javascript",
+        "text/html",
+        "image/svg+xml",
+        "image/png",
+        "image/jpeg",
+        "text/markdown",
+        "text/latex",
+        "text/plain",
+    )
 }
 
 
 def setup(app: Sphinx) -> Dict[str, Any]:
     app.add_builder(ProbsSystemRDFBuilder)
     # Add config for jupyter-book / myst_nb.
-    # See https://jupyterbook.org/advanced/advanced.html#enabling-a-custom-builder-using-jupyter-book
+    # See https://jupyterbook.org/advanced/advanced.html#enabling-a-custom-builder
+    # -using-jupyter-book
     if "nb_render_priority" in app.config:
         app.config["nb_render_priority"]["probs_rdf"] = NB_RENDER_PRIORITY["probs_rdf"]
     else:
@@ -46,7 +47,7 @@ def setup(app: Sphinx) -> Dict[str, Any]:
     app.add_directive("ttl", TTL)
 
     # Since the graph is built when parsing, any change should trigger a rebuild
-    app.add_config_value('probs_rdf_system_prefix', '', 'env', [str])
+    app.add_config_value("probs_rdf_system_prefix", "", "env", [str])
 
     return {
         "version": __version__,

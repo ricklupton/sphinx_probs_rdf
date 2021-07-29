@@ -1,10 +1,11 @@
 from collections import defaultdict
 from typing import Any, List
 import re
+import yaml
 
 from docutils import nodes
 from docutils.nodes import Node
-from docutils.parsers.rst import directives
+from docutils.parsers.rst import directives  # type: ignore
 from rdflib import Graph, Literal, BNode, Namespace  # type: ignore
 from rdflib.namespace import RDF, RDFS  # type: ignore
 from sphinx import addnodes
@@ -15,9 +16,8 @@ from sphinx.util.docfields import DocFieldTransformer
 from sphinx.util.docutils import SphinxDirective
 from sphinx.util.nodes import make_refnode
 from sphinx.util import logging
-logger = logging.getLogger(__name__)
 
-import yaml
+logger = logging.getLogger(__name__)
 
 
 def parse_composed_of(value):
@@ -501,7 +501,6 @@ class Object(SystemObjectDescription):
     def transform_content(self, contentnode):
         if hasattr(self.env, "probs_parent_object") and self.env.probs_parent_object:
             text = f"Parent: {remove_ns(self.SYS, self.env.probs_parent_object[-1])}"
-            ref = nodes.reference()
             contentnode += nodes.paragraph(text, text)
 
     def get_nesting_depth(self):
