@@ -531,6 +531,7 @@ class Object(SystemObjectDescription):
         uri = getattr(self.SYS, uri_str)
 
         g.add((uri, RDF.type, PROBS.Object))
+        g.add((uri, RDF.type, PROBS.ReferenceObject))
         if "label" in self.options:
             g.add((uri, RDFS.label, Literal(self.options["label"])))
             g.add((uri, PROBS.objectName, Literal(self.options["label"])))

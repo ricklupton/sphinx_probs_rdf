@@ -32,3 +32,7 @@ def test_probs_rdf_builder(app, status, warning):
 
     assert (SYS.AnotherParentOfP1P2, PROBS.processComposedOf, SYS.P1) in g
     assert (SYS.AnotherParentOfP1P2, PROBS.processComposedOf, SYS.P2) in g
+
+    # Object is a reference object
+    assert (SYS.Obj1, RDF.type, PROBS.Object) in g
+    assert (SYS.Obj1, RDF.type, PROBS.ReferenceObject) in g

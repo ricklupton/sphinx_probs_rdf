@@ -21,3 +21,6 @@ test-basic
 
     TODO: This does not show up as a parent currently because it's only added
     later.
+
+.. system:object:: Obj1
+    :label: Object 1
