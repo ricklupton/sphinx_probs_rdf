@@ -1,6 +1,11 @@
 Changelog
 =========
 
+v0.1.3 (2021-10-01)
+-------------------
+
+- Objects are now also ReferenceObjects in RDF output
+
 v0.1.2 (2021-07-29)
 -------------------
 
