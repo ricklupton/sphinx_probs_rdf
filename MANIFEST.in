@@ -1,0 +1,1 @@
+recursive-include src/sphinx_probs_rdf/_static/ *
