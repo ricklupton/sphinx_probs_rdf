@@ -572,7 +572,14 @@ class ObjectIndex(Index):
         process_produces = self.domain.data["process_produces"]
         object_processes = defaultdict(list)
 
-        # flip from recipe_ingredients to ingredient_recipes
+        # Add the objects initially; this is necessary for any objects which are
+        # NOT linked to processes to be included.
+        for obj in objects.values():
+            dispname = obj[0]
+            object_processes[dispname] = []
+
+        # Add in all the places that an object is consumed or produced by a
+        # process
         for process_name, objs in process_consumes.items():
             for obj in objs:
                 if ("object." + obj["object"]) not in objects:
