@@ -194,12 +194,16 @@ class EndSubProcessesDirective(SphinxDirective):
             self.env.probs_parent = []
         if self.env.probs_parent:
             leaving = self.env.probs_parent.pop()
-            paragraph_node = nodes.literal_block(
-                text=f'Ending sub processes of "{leaving}"'
+            _, _, leaving_id = leaving.rpartition("/")
+            nesting_depth = len(self.env.probs_parent)
+            paragraph_node = nodes.paragraph(
+                text=f'Ending sub processes of "{leaving_id}"',
+                classes=["system", "end-sub-processes", f"nested-{nesting_depth}"],
             )
         else:
             paragraph_node = nodes.literal_block(text="Nothing to end!")
         return [paragraph_node]
+
 
 
 class EndSubObjectsDirective(SphinxDirective):
@@ -208,8 +212,11 @@ class EndSubObjectsDirective(SphinxDirective):
             self.env.probs_parent_object = []
         if self.env.probs_parent_object:
             leaving = self.env.probs_parent_object.pop()
-            paragraph_node = nodes.literal_block(
-                text=f'Ending sub objects of "{leaving}"'
+            _, _, leaving_id = leaving.rpartition("/")
+            nesting_depth = len(self.env.probs_parent_object)
+            paragraph_node = nodes.paragraph(
+                text=f'Ending sub objects of "{leaving_id}"',
+                classes=["system", "end-sub-objects", f"nested-{nesting_depth}"],
             )
         else:
             paragraph_node = nodes.literal_block(text="Nothing to end!")

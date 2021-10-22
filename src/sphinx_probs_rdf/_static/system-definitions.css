@@ -1,0 +1,92 @@
+.sig-name {
+    font-size: 1.1em;
+}
+
+.sig-prename {
+    margin-left: 0.5em;
+    font-family: inherit;
+    color: inherit;
+}
+
+dl.system.process {
+    border-left: 2px solid gray;
+    padding-left: 0.5em;
+}
+
+dl.system.process dt p {
+    margin-bottom: 0;
+}
+
+dl.system.object {
+    border-left: 2px solid #deb;
+    padding-left: 0.5em;
+}
+
+dl.system.object dt p {
+    margin-bottom: 0;
+}
+
+@media (min-width: 575.98px) {
+    .system.process.nested-1,
+    .system.object.nested-1,
+    .system.end-sub-objects.nested-1,
+    .system.end-sub-processes.nested-1 {
+        margin-left: 1.5em;
+    }
+
+    .system.process.nested-2,
+    .system.object.nested-2,
+    .system.end-sub-objects.nested-2,
+    .system.end-sub-processes.nested-2  {
+        margin-left: 3em;
+    }
+
+    .system.process.nested-3,
+    .system.object.nested-3,
+    .system.end-sub-objects.nested-3,
+    .system.end-sub-processes.nested-3  {
+        margin-left: 4.5em;
+    }
+
+    .system.process.nested-4,
+    .system.object.nested-4,
+    .system.end-sub-objects.nested-4,
+    .system.end-sub-processes.nested-4 {
+        margin-left: 6em;
+    }
+}
+
+.admonition.system.object {
+    border-color: #fff6dd;
+}
+.admonition.system.object .admonition-title {
+    background-color: #fafafa;
+}
+.admonition.system.object .admonition-title:before {
+    color: #ffc107;
+    content: ""
+}
+
+.admonition.system.process {
+    border-color: rgba(68,138,255,.1);
+}
+.admonition.system.process .admonition-title {
+    background-color: #fafafa;
+}
+.admonition.system.process .admonition-title:before {
+    color: #007bff;
+    content: ""
+}
+
+.system.end-sub-objects, .system.end-sub-procesess {
+    padding-left: 0.5em;
+    border-radius: 0 0 0 5px;
+    font-size: 80%;
+    color: #444;
+}
+.system.end-sub-objects {
+    border-left: 2px solid #ffc107;
+}
+.system.end-sub-procesess {
+    border-left: 2px solid #007bff;
+}

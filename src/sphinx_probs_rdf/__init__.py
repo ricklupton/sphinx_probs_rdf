@@ -1,3 +1,5 @@
+from os import path
+from sphinx.util.fileutil import copy_asset_file
 from typing import Any, Dict
 from sphinx.application import Sphinx
 
@@ -28,6 +30,14 @@ NB_RENDER_PRIORITY = {
 }
 
 
+
+def copy_custom_files(app, exc):
+    if app.builder.format == 'html' and not exc:
+        staticdir = path.join(app.builder.outdir, '_static')
+        here = path.dirname(__file__)
+        copy_asset_file(path.join(here, '_static/system-definitions.css'), staticdir)
+
+
 def setup(app: Sphinx) -> Dict[str, Any]:
     app.add_builder(ProbsSystemRDFBuilder)
     # Add config for jupyter-book / myst_nb.
@@ -48,6 +58,10 @@ def setup(app: Sphinx) -> Dict[str, Any]:
 
     # Since the graph is built when parsing, any change should trigger a rebuild
     app.add_config_value("probs_rdf_system_prefix", "", "env", [str])
+
+    # Add the custom CSS for the directives
+    app.connect('build-finished', copy_custom_files)
+    app.add_css_file('system-definitions.css')
 
     return {
         "version": __version__,
