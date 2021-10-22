@@ -339,6 +339,17 @@ class SystemObjectDescription(ObjectDescription):
             )
         return sig
 
+    def _system_id_link(self, sys_id, within=None):
+        """Insert a cross reference to another object/process."""
+        refnode = addnodes.pending_xref('', refdomain="system", refexplicit=False,
+                                        reftype="ref", reftarget=sys_id)
+        refnode += nodes.inline(sys_id, sys_id)
+        if within is not None:
+            wrapper = within("", "")
+            wrapper += refnode
+            return wrapper
+        return refnode
+
 
 class Process(SystemObjectDescription):
     # has_content = True
@@ -371,16 +382,6 @@ class Process(SystemObjectDescription):
             p = nodes.paragraph("", "Parent: ")
             p += self._system_id_link(parent_id)
             contentnode += p
-
-    def _system_id_link(self, sys_id, within=None):
-        refnode = addnodes.pending_xref('', refdomain="system", refexplicit=False,
-                                        reftype="ref", reftarget=sys_id)
-        refnode += nodes.inline(sys_id, sys_id)
-        if within is not None:
-            wrapper = within("", "")
-            wrapper += refnode
-            return wrapper
-        return refnode
 
     def _recipe_table(self, objects):
         header_rows = [[nodes.literal("", "Object"), nodes.literal("", "Amount")]]
@@ -507,8 +508,10 @@ class Object(SystemObjectDescription):
 
     def transform_content(self, contentnode):
         if hasattr(self.env, "probs_parent_object") and self.env.probs_parent_object:
-            text = f"Parent: {remove_ns(self.SYS, self.env.probs_parent_object[-1])}"
-            contentnode += nodes.paragraph(text, text)
+            _, _, parent_id = self.env.probs_parent_object[-1].rpartition("/")
+            p = nodes.paragraph("", "Parent: ")
+            p += self._system_id_link(parent_id)
+            contentnode += p
 
     def get_nesting_depth(self):
         if hasattr(self.env, "probs_parent_object"):
