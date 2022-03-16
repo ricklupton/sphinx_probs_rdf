@@ -1,7 +1,7 @@
 Changelog
 =========
 
-v0.1.5 ()
+v0.1.6 (2022-03-16)
 -------------------
 
 New:
@@ -10,6 +10,12 @@ New:
 - `TTL` directive actually parses the turtle format RDF and checks it is valid.
 - New `system:object` option `traded` to set `probs:objectIsTraded` (experimental).
 - New `system:object` option `equivalent` to set `probs:objectEquivalentTo` (experimental).
+
+v0.1.5 (2021-10-22)
+-------------------
+
+Fixes:
+- Include static CSS files within the package distribution.
 
 v0.1.4 (2021-10-22)
 -------------------
