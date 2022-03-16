@@ -495,6 +495,27 @@ def _process_inputs_outputs(g, SYS, uri, relation, objects, recipe_items):
             recipe_items.append(item)
 
 
+def parse_traded(value):
+    """Check the value of the :traded: option is valid."""
+    if value is None:
+        return (False, False)
+    value = value.lower()
+    imp = value.startswith("import")
+    exp = value.startswith("export")
+    if (value in ("both", "yes", "true") or
+        "import" in value and "export" in value):
+        imp = exp = True
+    return (imp, exp)
+
+
+def parse_equivalent(value):
+    """Convert list of uris."""
+    if value is None:
+        value = ""
+    items = [x.strip() for x in value.split()]
+    return items
+
+
 class Object(SystemObjectDescription):
     has_content = True
     required_arguments = 1
@@ -502,6 +523,8 @@ class Object(SystemObjectDescription):
         "label": directives.unchanged,
         "become_parent": directives.flag,
         "parent_object": directives.unchanged,
+        "traded": parse_traded,
+        "equivalent": parse_equivalent,
     }
     signature_prefix = "Object: "
 
@@ -559,6 +582,41 @@ class Object(SystemObjectDescription):
         if "become_parent" in self.options:
             # print("xxx become parent object")
             self.env.probs_parent_object.append(uri)
+
+        if "traded" in self.options:
+            imp, exp = self.options["traded"]
+            if imp != exp:
+                logger.error("Currently objects must be either fully traded"
+                             "(imports and exports) or not at all")
+            g.add((uri, PROBS.objectIsTraded, Literal(imp or exp)))
+
+        if "equivalent" in self.options:
+            for item in self.options["equivalent"]:
+                item_uri = self.parse_uri(item)
+                g.add((uri, PROBS.objectEquivalentTo, item_uri))
+
+
+    def parse_uri(self, item):
+        """Convert a string to a URIRef.
+
+        A blank prefix or bare id refers to the namespace given by the
+        `probs_rdf_system_prefix` config variable.
+
+        A missing suffix means the same as the object currently being defined.
+
+        """
+        if item and item[0] == "<" and item[-1] == ">":
+            return URIRef(item[1:-1])
+        prefix, _, item_id = item.rpartition(":")
+        if not prefix:
+            ns = Namespace(self.config.probs_rdf_system_prefix)
+        else:
+            ns = Namespace(self.config.probs_rdf_extra_prefixes[prefix])
+        if not item_id:
+            signatures = self.get_signatures()
+            assert len(signatures) == 1, "only assuming 1 signature can be given"
+            item_id = signatures[0]
+        return getattr(ns, item_id)
 
 
 class ObjectIndex(Index):

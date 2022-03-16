@@ -8,6 +8,8 @@ New:
 - New config value `probs_rdf_extra_prefixes` is a dictionary of RDF prefixes which will be bound when parsing RDF values. Default prefixes include `sys:`, equal to the config value `probs_rdf_system_prefix`, `probs:` for the PRObs ontology, and `rec:` for recipes.
 - `TTL` directive renders with syntax highlighting as a code block.
 - `TTL` directive actually parses the turtle format RDF and checks it is valid.
+- New `system:object` option `traded` to set `probs:objectIsTraded` (experimental).
+- New `system:object` option `equivalent` to set `probs:objectEquivalentTo` (experimental).
 
 v0.1.4 (2021-10-22)
 -------------------
