@@ -58,6 +58,7 @@ def setup(app: Sphinx) -> Dict[str, Any]:
 
     # Since the graph is built when parsing, any change should trigger a rebuild
     app.add_config_value("probs_rdf_system_prefix", "", "env", [str])
+    app.add_config_value("probs_rdf_extra_prefixes", {}, "env", [dict])
 
     # Add the custom CSS for the directives
     app.connect('build-finished', copy_custom_files)

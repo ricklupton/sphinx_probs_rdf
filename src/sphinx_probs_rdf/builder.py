@@ -35,6 +35,7 @@ class ProbsSystemRDFBuilder(Builder):
     def finish(self) -> None:
         assert self.app.builder
         env = self.app.builder.env
+        assert env is not None
         filename = os.path.join(self.outdir, 'output.ttl')
         if hasattr(env, 'probs_graph'):
             graph = env.probs_graph  # type: ignore
@@ -43,3 +44,5 @@ class ProbsSystemRDFBuilder(Builder):
                 graph.serialize(f, format="turtle")
         else:
             logger.warning('No graph found!')
+            with open(filename, 'wb') as f:
+                f.write(b"")

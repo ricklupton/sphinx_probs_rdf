@@ -6,10 +6,11 @@ import yaml
 from docutils import nodes
 from docutils.nodes import Node
 from docutils.parsers.rst import directives  # type: ignore
-from rdflib import Graph, Literal, BNode, Namespace  # type: ignore
+from rdflib import Graph, URIRef, Literal, BNode, Namespace  # type: ignore
 from rdflib.namespace import RDF, RDFS  # type: ignore
 from sphinx import addnodes
 from sphinx.directives import ObjectDescription
+from sphinx.directives.code import CodeBlock
 from sphinx.domains import Domain, Index
 from sphinx.roles import XRefRole
 from sphinx.util.docfields import DocFieldTransformer
@@ -128,26 +129,23 @@ def eval_amount(item, namespace):
     return item
 
 
-class TTL(SphinxDirective):
+class TTL(CodeBlock):
     has_content = True
 
     def run(self):
-        if not hasattr(self.env, "probs_all_ttl"):
-            self.env.probs_all_ttl = []
+        g = get_or_setup_graph(self.env, self.config)
+        preamble = "\n".join('@prefix %s: <%s> .\n' % (prefix, uri)
+                             for prefix, uri in g.namespaces())
+        input_data = preamble + "\n" + "\n".join(self.content)
+        try:
+            g.parse(data=input_data, format="text/turtle")
+        except SyntaxError as err:
+            logger.warning("Cannot parse TTL block: %s", err,
+                           location=(self.env.docname, self.lineno))
 
-        self.env.probs_all_ttl.append(
-            {
-                "docname": self.env.docname,
-                "lineno": self.lineno,
-                "content": self.content,
-                # 'target': targetnode,
-            }
-        )
-        # print(self.env.docname, self.lineno)
-        # print(self.content)
-
-        paragraph_node = nodes.literal_block(text="\n".join(self.content))
-        return [paragraph_node]
+        # Force language
+        self.arguments = ["turtle"]
+        return super().run()
 
 
 class StartSubProcessesDirective(SphinxDirective):
@@ -231,6 +229,22 @@ QUANTITYKIND = Namespace("http://qudt.org/vocab/quantitykind/")
 def remove_ns(ns, uri):
     if uri[: len(ns)] == ns:
         return uri[len(ns) :]
+
+
+def get_or_setup_graph(env, config):
+    """Return the rdflib Graph or set up a new one as needed."""
+    if env is None or not hasattr(env, "probs_graph"):
+        g = Graph()
+        g.bind("sys", Namespace(config.probs_rdf_system_prefix))
+        g.bind("probs", PROBS)
+        g.bind("rec", PROBS_RECIPE)
+        for prefix, uri in config.probs_rdf_extra_prefixes.items():
+            g.bind(prefix, uri)
+        if env is not None:
+            env.probs_graph = g
+    else:
+        g = env.probs_graph
+    return g
 
 
 class SystemObjectDescription(ObjectDescription):
@@ -411,14 +425,7 @@ class Process(SystemObjectDescription):
             )
 
     def define_graph(self, uri_str):
-        if not hasattr(self.env, "probs_graph"):
-            g = Graph()
-            g.bind("sys", self.SYS)
-            g.bind("probs", PROBS)
-            g.bind("rec", PROBS_RECIPE)
-            self.env.probs_graph = g
-        else:
-            g = self.env.probs_graph
+        g = get_or_setup_graph(self.env, self.config)
 
         if not hasattr(self.env, "probs_parent"):
             self.env.probs_parent = []
@@ -527,13 +534,7 @@ class Object(SystemObjectDescription):
             recipes.add_object(sig, [])
 
     def define_graph(self, uri_str):
-        if not hasattr(self.env, "probs_graph"):
-            g = Graph()
-            g.bind("sys", self.SYS)
-            g.bind("probs", PROBS)
-            self.env.probs_graph = g
-        else:
-            g = self.env.probs_graph
+        g = get_or_setup_graph(self.env, self.config)
 
         if not hasattr(self.env, "probs_parent_object"):
             self.env.probs_parent_object = []
