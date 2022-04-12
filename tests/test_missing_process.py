@@ -14,4 +14,4 @@ def test_builder_reports_warning_for_missing_process(app, status, warning):
 
     assert "build succeeded" not in status.getvalue()
     warnings = warning.getvalue().strip()
-    assert 'WARNING: Requested child "http://example.org/system/Missing" of "http://example.org/system/ErrorMissingProcess" is not a Process' in warnings
+    assert 'ERROR: Requested child "http://example.org/system/Missing" of "http://example.org/system/ErrorMissingProcess" is not a Process' in warnings
