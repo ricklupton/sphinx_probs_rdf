@@ -1,6 +1,12 @@
 Changelog
 =========
 
+v0.1.7 (2022-04-12)
+-------------------
+
+New:
+- Recipes can be in several units other than "kg" ("m2" for area, "m3" for volume, and "-" for number). This list may be expanded in future.
+
 v0.1.6 (2022-03-16)
 -------------------
 

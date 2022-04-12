@@ -475,6 +475,14 @@ class Process(SystemObjectDescription):
             self.env.probs_parent.append(uri)
 
 
+SUPPORTED_UNIT_METRICS = {
+    "kg": QUANTITYKIND.Mass,
+    "m2": QUANTITYKIND.Area,
+    "m3": QUANTITYKIND.Volume,
+    "-": QUANTITYKIND.Dimensionless,
+}
+
+
 def _process_inputs_outputs(g, SYS, uri, relation, objects, recipe_items):
     for obj in objects:
         obj_uri = getattr(SYS, obj["object"])
@@ -483,15 +491,15 @@ def _process_inputs_outputs(g, SYS, uri, relation, objects, recipe_items):
         if "amount" in obj:
             # Have a recipe
 
-            # XXX only support kg for now
-            if "unit" in obj and obj["unit"] != "kg":
+            # XXX only support a few units for now, this could be more general.
+            if "unit" in obj and obj["unit"] not in SUPPORTED_UNIT_METRICS:
                 logger.error("Unsupported unit %r for object %r in recipe for %r",
                              obj["unit"], obj["object"], uri)
 
             item = BNode()
             g.add((item, PROBS_RECIPE.object, obj_uri))
             g.add((item, PROBS_RECIPE.quantity, Literal(obj["amount"])))
-            g.add((item, PROBS_RECIPE.metric, QUANTITYKIND.Mass))
+            g.add((item, PROBS_RECIPE.metric, SUPPORTED_UNIT_METRICS[obj["unit"]]))
             recipe_items.append(item)
 
 
