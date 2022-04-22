@@ -1,6 +1,12 @@
 Changelog
 =========
 
+v0.2.0 (2022-04-22)
+-------------------
+
+Changes:
+- Recipes are now in namespace probs-recipe: not probs: prefix (the semantics are different so it should have been different)
+
 v0.1.7 (2022-04-12)
 -------------------
 

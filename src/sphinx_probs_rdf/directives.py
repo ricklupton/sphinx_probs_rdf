@@ -466,9 +466,9 @@ class Process(SystemObjectDescription):
             recipe = BNode()
             g.add((uri, PROBS_RECIPE.hasRecipe, recipe))
             for item in recipe_consumes:
-                g.add((recipe, PROBS.consumes, item))
+                g.add((recipe, PROBS_RECIPE.consumes, item))
             for item in recipe_produces:
-                g.add((recipe, PROBS.produces, item))
+                g.add((recipe, PROBS_RECIPE.produces, item))
 
         if "become_parent" in self.options:
             # print("xxx become parent")
