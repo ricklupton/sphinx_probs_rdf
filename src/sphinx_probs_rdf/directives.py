@@ -660,15 +660,23 @@ class ObjectIndex(Index):
         for process_name, objs in process_consumes.items():
             for obj in objs:
                 if ("object." + obj["object"]) not in objects:
-                    msg = "WARNING: Object {} consumed by process {} is not defined"
-                    print(msg.format(obj["object"], process_name))
+                    logger.error(
+                        "Object %s consumed by process %s is not defined",
+                        obj["object"],
+                        process_name,
+                        # location=(self.env.docname, self.lineno)
+                    )
                     continue
                 object_processes[obj["object"]].append((process_name, "consumed"))
         for process_name, objs in process_produces.items():
             for obj in objs:
                 if ("object." + obj["object"]) not in objects:
-                    msg = "WARNING: Object {} produced by process {} is not defined"
-                    print(msg.format(obj["object"], process_name))
+                    logger.error(
+                        "Object %s produced by process %s is not defined",
+                        obj["object"],
+                        process_name,
+                        # location=(self.env.docname, self.lineno)
+                    )
                     continue
                 object_processes[obj["object"]].append((process_name, "produced"))
 
@@ -760,9 +768,8 @@ class SystemDomain(Domain):
 
             # print("system domain: found %s %s %r xref" % (todocname, targ, target))
             return make_refnode(builder, fromdocname, todocname, targ, contnode, targ)
-        else:
-            print("system domain: found nothing for %r xref" % target)
-            return None
+
+        return None
 
     def add_process(self, signature, consumes, produces):
         """Add a new process to the domain."""
