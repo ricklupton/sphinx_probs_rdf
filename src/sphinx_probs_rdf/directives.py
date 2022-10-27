@@ -747,7 +747,9 @@ class SystemDomain(Domain):
     }
 
     def get_full_qualified_name(self, node):
-        return "{}.{}".format("system", node.arguments[0])
+        if node.get("refdomain") == "system":
+            return "{}.{}".format("system", node.get("reftarget"))
+        return None
 
     def get_objects(self):
         for obj in self.data["processes"]:
