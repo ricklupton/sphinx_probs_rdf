@@ -78,7 +78,7 @@ dl.system.object dt p {
     content: ""
 }
 
-.system.end-sub-objects, .system.end-sub-procesess {
+.system.end-sub-objects, .system.end-sub-processes {
     padding-left: 0.5em;
     border-radius: 0 0 0 5px;
     font-size: 80%;
@@ -87,6 +87,11 @@ dl.system.object dt p {
 .system.end-sub-objects {
     border-left: 2px solid #ffc107;
 }
-.system.end-sub-procesess {
+.system.end-sub-processes {
     border-left: 2px solid #007bff;
+}
+
+/* Fix issue with toggle dropdown admonitions not hiding tables */
+.toggle-hidden.admonition .admonition-title ~ table {
+  display: none;
 }
