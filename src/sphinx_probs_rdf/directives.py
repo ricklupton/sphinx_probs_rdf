@@ -475,15 +475,8 @@ class Process(SystemObjectDescription):
             self.env.probs_parent.append(uri)
 
 
-SUPPORTED_UNIT_METRICS = {
-    "kg": QUANTITYKIND.Mass,
-    "m2": QUANTITYKIND.Area,
-    "m3": QUANTITYKIND.Volume,
-    "-": QUANTITYKIND.Dimensionless,
-}
-
-
 def _process_inputs_outputs(g, config, uri, relation, objects, recipe_items):
+    units = config.probs_rdf_units
     for obj in objects:
         obj_uri = parse_uri(config, obj["object"])
         g.add((uri, PROBS[relation], obj_uri))
@@ -492,14 +485,17 @@ def _process_inputs_outputs(g, config, uri, relation, objects, recipe_items):
             # Have a recipe
 
             # XXX only support a few units for now, this could be more general.
-            if "unit" in obj and obj["unit"] not in SUPPORTED_UNIT_METRICS:
-                logger.error("Unsupported unit %r for object %r in recipe for %r",
-                             obj["unit"], obj["object"], uri)
+            if "unit" in obj and obj["unit"] not in units:
+                logger.error("Unsupported unit %r for object %r in recipe for %r -- treating as 'kg'",
+                             obj["unit"], obj["object"], str(uri))
+                scale, metric = units["kg"]
+            else:
+                scale, metric = units[obj["unit"]]
 
             item = BNode()
             g.add((item, PROBS_RECIPE.object, obj_uri))
-            g.add((item, PROBS_RECIPE.quantity, Literal(obj["amount"])))
-            g.add((item, PROBS_RECIPE.metric, SUPPORTED_UNIT_METRICS[obj["unit"]]))
+            g.add((item, PROBS_RECIPE.quantity, Literal(scale * obj["amount"])))
+            g.add((item, PROBS_RECIPE.metric, metric))
             recipe_items.append(item)
 
 
