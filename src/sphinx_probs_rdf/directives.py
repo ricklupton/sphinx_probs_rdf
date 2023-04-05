@@ -9,9 +9,10 @@ from docutils.parsers.rst import directives  # type: ignore
 from rdflib import Graph, URIRef, Literal, BNode, Namespace  # type: ignore
 from rdflib.namespace import RDF, RDFS  # type: ignore
 from sphinx import addnodes
+from sphinx.locale import _, __
 from sphinx.directives import ObjectDescription
 from sphinx.directives.code import CodeBlock
-from sphinx.domains import Domain, Index
+from sphinx.domains import Domain, Index, ObjType
 from sphinx.roles import XRefRole
 from sphinx.util.docfields import DocFieldTransformer
 from sphinx.util.docutils import SphinxDirective
@@ -741,6 +742,10 @@ class SystemDomain(Domain):
 
     name = "system"
     label = "System definition"
+    object_types = {
+        'Process': ObjType(_('process'), 'ref'),
+        'Object':  ObjType(_('object'),  'ref'),
+    }
     roles = {"ref": XRefRole()}
     directives = {
         "process": Process,
