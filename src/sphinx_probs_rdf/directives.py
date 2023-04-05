@@ -160,7 +160,7 @@ class StartSubProcessesDirective(SphinxDirective):
         if not hasattr(self.env, "probs_parent"):
             self.env.probs_parent = []
 
-        uri = getattr(self.SYS, self.arguments[0])
+        uri = parse_uri(self.config, self.arguments[0])
         self.env.probs_parent.append(uri)
 
         paragraph_node = nodes.literal_block(text=f'Starting sub processes of "{uri}"')
@@ -179,7 +179,7 @@ class StartSubObjectsDirective(SphinxDirective):
         if not hasattr(self.env, "probs_parent_object"):
             self.env.probs_parent_object = []
 
-        uri = getattr(self.SYS, self.arguments[0])
+        uri = parse_uri(self.config, self.arguments[0])
         self.env.probs_parent_object.append(uri)
 
         paragraph_node = nodes.literal_block(text=f'Starting sub objects of "{uri}"')
@@ -430,7 +430,7 @@ class Process(SystemObjectDescription):
         if not hasattr(self.env, "probs_parent"):
             self.env.probs_parent = []
 
-        uri = getattr(self.SYS, uri_str)
+        uri = parse_uri(self.config, uri_str)
 
         g.add((uri, RDF.type, PROBS.Process))
         if "label" in self.options:
@@ -460,8 +460,8 @@ class Process(SystemObjectDescription):
             defs, self.options.get("consumes", []), self.options.get("produces", []))
 
         recipe_consumes, recipe_produces = [], []
-        _process_inputs_outputs(g, self.SYS, uri, "consumes", consumes, recipe_consumes)
-        _process_inputs_outputs(g, self.SYS, uri, "produces", produces, recipe_produces)
+        _process_inputs_outputs(g, self.config, uri, "consumes", consumes, recipe_consumes)
+        _process_inputs_outputs(g, self.config, uri, "produces", produces, recipe_produces)
         if recipe_consumes or recipe_produces:
             recipe = BNode()
             g.add((uri, PROBS_RECIPE.hasRecipe, recipe))
@@ -483,9 +483,9 @@ SUPPORTED_UNIT_METRICS = {
 }
 
 
-def _process_inputs_outputs(g, SYS, uri, relation, objects, recipe_items):
+def _process_inputs_outputs(g, config, uri, relation, objects, recipe_items):
     for obj in objects:
-        obj_uri = getattr(SYS, obj["object"])
+        obj_uri = parse_uri(config, obj["object"])
         g.add((uri, PROBS[relation], obj_uri))
 
         if "amount" in obj:
@@ -522,6 +522,27 @@ def parse_equivalent(value):
         value = ""
     items = [x.strip() for x in value.split()]
     return items
+
+
+def parse_uri(config, item, default=None):
+    """Convert a string to a URIRef.
+
+    A blank prefix or bare id refers to the namespace given by the
+    `probs_rdf_system_prefix` config variable.
+
+    A missing suffix means the same as the object currently being defined.
+
+    """
+    if item and item[0] == "<" and item[-1] == ">":
+        return URIRef(item[1:-1])
+    prefix, _, item_id = item.rpartition(":")
+    if not prefix:
+        ns = Namespace(config.probs_rdf_system_prefix)
+    else:
+        ns = Namespace(config.probs_rdf_extra_prefixes[prefix])
+    if not item_id:
+        item_id = default if default is not None else ""
+    return getattr(ns, item_id)
 
 
 class Object(SystemObjectDescription):
@@ -570,7 +591,7 @@ class Object(SystemObjectDescription):
         if not hasattr(self.env, "probs_parent_object"):
             self.env.probs_parent_object = []
 
-        uri = getattr(self.SYS, uri_str)
+        uri = self.parse_uri(uri_str)
 
         g.add((uri, RDF.type, PROBS.Object))
         g.add((uri, RDF.type, PROBS.ReferenceObject))
@@ -582,7 +603,7 @@ class Object(SystemObjectDescription):
             g.add((uri, PROBS.objectName, Literal(uri_str)))
 
         if "parent_object" in self.options:
-            parent_uri = getattr(self.SYS, self.options["parent_object"])
+            parent_uri = parse_uri(self.config, self.options["parent_object"])
             g.add((parent_uri, PROBS.objectComposedOf, uri))
         elif self.env.probs_parent_object:
             g.add((self.env.probs_parent_object[-1], PROBS.objectComposedOf, uri))
@@ -613,18 +634,10 @@ class Object(SystemObjectDescription):
         A missing suffix means the same as the object currently being defined.
 
         """
-        if item and item[0] == "<" and item[-1] == ">":
-            return URIRef(item[1:-1])
-        prefix, _, item_id = item.rpartition(":")
-        if not prefix:
-            ns = Namespace(self.config.probs_rdf_system_prefix)
-        else:
-            ns = Namespace(self.config.probs_rdf_extra_prefixes[prefix])
-        if not item_id:
-            signatures = self.get_signatures()
-            assert len(signatures) == 1, "only assuming 1 signature can be given"
-            item_id = signatures[0]
-        return getattr(ns, item_id)
+        signatures = self.get_signatures()
+        assert len(signatures) == 1, "only assuming 1 signature can be given"
+        default_item_id = signatures[0]
+        return parse_uri(self.config, item, default_item_id)
 
 
 class ObjectIndex(Index):
