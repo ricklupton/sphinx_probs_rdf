@@ -1,22 +1,25 @@
 from collections import defaultdict
-from typing import Any, List
+from typing import Any, List, Dict, Iterator, Tuple, Optional, NamedTuple, cast
 import re
 import yaml
 
 from docutils import nodes
-from docutils.nodes import Node
+from docutils.nodes import Node, Element
 from docutils.parsers.rst import directives  # type: ignore
-from rdflib import Graph, URIRef, Literal, BNode, Namespace  # type: ignore
+from rdflib import Graph, ConjunctiveGraph, URIRef, Literal, BNode, Namespace  # type: ignore
 from rdflib.namespace import RDF, RDFS  # type: ignore
 from sphinx import addnodes
+from sphinx.addnodes import desc_signature, pending_xref
+from sphinx.builders import Builder
 from sphinx.locale import _, __
 from sphinx.directives import ObjectDescription
 from sphinx.directives.code import CodeBlock
 from sphinx.domains import Domain, Index, ObjType
+from sphinx.environment import BuildEnvironment
 from sphinx.roles import XRefRole
 from sphinx.util.docfields import DocFieldTransformer
 from sphinx.util.docutils import SphinxDirective
-from sphinx.util.nodes import make_refnode
+from sphinx.util.nodes import make_refnode, find_pending_xref_condition, make_id
 from sphinx.util import logging
 
 logger = logging.getLogger(__name__)
@@ -134,7 +137,8 @@ class TTL(CodeBlock):
     has_content = True
 
     def run(self):
-        g = get_or_setup_graph(self.env, self.config)
+        domain = cast(SystemDomain, self.env.get_domain("system"))
+        g = domain.get_graph(self.env.docname)
         preamble = "\n".join('@prefix %s: <%s> .\n' % (prefix, uri)
                              for prefix, uri in g.namespaces())
         input_data = preamble + "\n" + "\n".join(self.content)
@@ -152,17 +156,11 @@ class TTL(CodeBlock):
 class StartSubProcessesDirective(SphinxDirective):
     required_arguments = 1
 
-    @property
-    def SYS(self) -> Namespace:
-        """Return the system namespace."""
-        return Namespace(self.config.probs_rdf_system_prefix)
-
     def run(self):
-        if not hasattr(self.env, "probs_parent"):
-            self.env.probs_parent = []
-
         uri = parse_uri(self.config, self.arguments[0])
-        self.env.probs_parent.append(uri)
+        self.env.ref_context["system:process"] = uri
+        parents = self.env.ref_context.setdefault("system:processes", [])
+        parents.append(uri)
 
         paragraph_node = nodes.literal_block(text=f'Starting sub processes of "{uri}"')
         return [paragraph_node]
@@ -171,17 +169,11 @@ class StartSubProcessesDirective(SphinxDirective):
 class StartSubObjectsDirective(SphinxDirective):
     required_arguments = 1
 
-    @property
-    def SYS(self) -> Namespace:
-        """Return the system namespace."""
-        return Namespace(self.config.probs_rdf_system_prefix)
-
     def run(self):
-        if not hasattr(self.env, "probs_parent_object"):
-            self.env.probs_parent_object = []
-
         uri = parse_uri(self.config, self.arguments[0])
-        self.env.probs_parent_object.append(uri)
+        self.env.ref_context["system:object"] = uri
+        parents = self.env.ref_context.setdefault("system:objects", [])
+        parents.append(uri)
 
         paragraph_node = nodes.literal_block(text=f'Starting sub objects of "{uri}"')
         return [paragraph_node]
@@ -189,36 +181,43 @@ class StartSubObjectsDirective(SphinxDirective):
 
 class EndSubProcessesDirective(SphinxDirective):
     def run(self):
-        if not hasattr(self.env, "probs_parent"):
-            self.env.probs_parent = []
-        if self.env.probs_parent:
-            leaving = self.env.probs_parent.pop()
+        parents = self.env.ref_context.setdefault("system:processes", [])
+        if parents:
+            nesting_depth = len(parents)
+            leaving = parents.pop()
             _, _, leaving_id = leaving.rpartition("/")
-            nesting_depth = len(self.env.probs_parent)
             paragraph_node = nodes.paragraph(
                 text=f'Ending sub processes of "{leaving_id}"',
                 classes=["system", "end-sub-processes", f"nested-{nesting_depth}"],
             )
         else:
             paragraph_node = nodes.literal_block(text="Nothing to end!")
-        return [paragraph_node]
 
+        self.env.ref_context["system:process"] = (
+            parents[-1] if parents else None
+        )
+
+        return [paragraph_node]
 
 
 class EndSubObjectsDirective(SphinxDirective):
     def run(self):
-        if not hasattr(self.env, "probs_parent_object"):
-            self.env.probs_parent_object = []
-        if self.env.probs_parent_object:
-            leaving = self.env.probs_parent_object.pop()
+        parents = self.env.ref_context.setdefault("system:objects", [])
+        if parents:
+            nesting_depth = len(parents)
+            leaving = parents.pop()
             _, _, leaving_id = leaving.rpartition("/")
-            nesting_depth = len(self.env.probs_parent_object)
             paragraph_node = nodes.paragraph(
                 text=f'Ending sub objects of "{leaving_id}"',
                 classes=["system", "end-sub-objects", f"nested-{nesting_depth}"],
             )
         else:
             paragraph_node = nodes.literal_block(text="Nothing to end!")
+
+        self.env.ref_context["system:object"] = (
+            parents[-1] if parents else None
+        )
+
         return [paragraph_node]
 
 
@@ -227,148 +226,119 @@ PROBS_RECIPE = Namespace("https://ukfires.org/probs/ontology/recipe/")
 QUANTITYKIND = Namespace("http://qudt.org/vocab/quantitykind/")
 
 
-def remove_ns(ns, uri):
-    if uri[: len(ns)] == ns:
-        return uri[len(ns) :]
+class probs_info(nodes.Element, nodes.General):
+    """Node for PRObs info.
+    """
 
 
-def get_or_setup_graph(env, config):
-    """Return the rdflib Graph or set up a new one as needed."""
-    if env is None or not hasattr(env, "probs_graph"):
-        g = Graph()
-        g.bind("sys", Namespace(config.probs_rdf_system_prefix))
-        g.bind("probs", PROBS)
-        g.bind("rec", PROBS_RECIPE)
-        for prefix, uri in config.probs_rdf_extra_prefixes.items():
-            g.bind(prefix, uri)
-        if env is not None:
-            env.probs_graph = g
-    else:
-        g = env.probs_graph
-    return g
+class rdf_reference(nodes.reference):
+    """Reference to RDF object.
+    """
+
+
+class probs_process_info(probs_info):
+    pass
+
+
+class probs_object_info(probs_info):
+    pass
+
+
+class ObjectEquivalentTo(SphinxDirective):
+    required_arguments = 2
+    option_spec = {
+        "confidence": directives.unchanged,
+        'class': directives.class_option,
+    }
+    has_content = True
+
+    def run(self):
+        if not self.options.get('class'):
+            self.options['class'] = ['admonition-object-equivalent-to']
+
+        # self.assert_has_content()
+        uri1 = parse_uri(self.config, self.arguments[0])
+        uri2 = parse_uri(self.config, self.arguments[1])
+
+        node = nodes.admonition()
+
+        title = nodes.title("", "")
+        title += [
+            nodes.strong("Object equivalence: ", "Object equivalence: "),
+            rdf_reference(uri1, target=uri1, include_label=True),
+            nodes.Text(" ⇔ "),
+            rdf_reference(uri2, target=uri2, include_label=True),
+        ]
+
+        self.indexnode = addnodes.index(entries=[])
+
+        contentnode = nodes.paragraph()  # desc_content?
+        node += [title, contentnode]
+        self.state.nested_parse(self.content, self.content_offset, contentnode)
+
+        g = self.env.get_domain("system").get_graph(self.env.docname)
+        g.add((uri1, PROBS.objectEquivalentTo, uri2))
+
+        return [self.indexnode, node]
+
 
 
 class SystemObjectDescription(ObjectDescription):
     has_content = True
     required_arguments = 1
-    # option_spec = {
-    #     'label': directives.unchanged_required,
-    #     'become_parent': directives.flag,
-    #     'consumes': directives.unchanged,
-    #     'produces': directives.unchanged,
-    # }
-
-    @property
-    def SYS(self) -> Namespace:
-        """Return the system namespace."""
-        return Namespace(self.config.probs_rdf_system_prefix)
 
     def run(self) -> List[Node]:
-        """
-        Main directive entry function, called by docutils upon encountering the
-        directive.
+        """Override to return admonitions rather than descs.
 
-        This directive is meant to be quite easily subclassable, so it
-        delegates to several additional methods.  What it does:
-
-        * find out if called as a domain-specific directive, set self.domain
-        * create a `desc` node to fit all description inside
-        * parse standard options, currently `noindex`
-        * create an index node if needed as self.indexnode
-        * parse all given signatures (as returned by self.get_signatures())
-          using self.handle_signature(), which should either return a name
-          or raise ValueError
-        * add index entries using self.add_target_and_index()
-        * parse the content and handle doc fields in it
+        This is a hacky way of getting a collapsible/togglable block, rather
+        than inline descriptions.
 
         """
-        if ":" in self.name:
-            self.domain, self.objtype = self.name.split(":", 1)
-        else:
-            self.domain, self.objtype = "", self.name
-        self.indexnode = addnodes.index(entries=[])
-
         nest_depth = "nested-%d" % self.get_nesting_depth()
-        node = nodes.admonition(classes=["toggle", self.objtype, nest_depth])
-        node.document = self.state.document
-        node["domain"] = self.domain
-        # 'desctype' is a backwards compatible attribute
-        node["objtype"] = node["desctype"] = self.objtype
-        node["noindex"] = noindex = "noindex" in self.options
-        if self.domain:
-            node["classes"].append(self.domain)
 
-        self.names = []  # type: List[Any]
-        signatures = self.get_signatures()
-        assert len(signatures) == 1, "only assuming 1 signature can be given"
-        for i, sig in enumerate(signatures):
-            # add a signature node for each signature in the current unit
-            # and add a reference target for it
-            signode = nodes.title(sig, "")
-            self.set_source_info(signode)
-            node.append(signode)
-            try:
-                # name can also be a tuple, e.g. (classname, objname);
-                # this is strictly domain-specific (i.e. no assumptions may
-                # be made in this base class)
-                name = self.handle_signature(sig, signode)
-            except ValueError:
-                # signature parsing failed
-                signode.clear()
-                signode += addnodes.desc_name(sig, sig)
-                continue  # we don't want an index entry here
-            if name not in self.names:
-                self.names.append(name)
-                if not noindex:
-                    # only add target and index entry if this is the first
-                    # description of the object with this name in this desc
-                    # block
-                    self.add_target_and_index(name, sig, signode)
+        indexnode, node = super().run()
 
-        contentnode = nodes.paragraph()
-        node.append(contentnode)
-        if self.names:
-            # needed for association of version{added,changed} directives
-            self.env.temp_data["object"] = self.names[0]
-        self.before_content()
-        self.state.nested_parse(self.content, self.content_offset, contentnode)
-        self.transform_content(contentnode)
-        self.env.app.emit(
-            "object-description-transform", self.domain, self.objtype, contentnode
-        )
-        DocFieldTransformer(self).transform_all(contentnode)
-        self.env.temp_data["object"] = None
-        self.after_content()
+        # Replace `desc` with `admonition`
+        new_node = nodes.admonition("", *node.children)
+        new_node["classes"] = node["classes"] + ["toggle", nest_depth]
 
-        # Do this here so `become_parent` hasn't taken effect too early
-        self.define_graph(signatures[0])
+        # Replace desc_content with paragraph and desc_signature with title
+        for sig in new_node.findall(addnodes.desc_signature):
+            sig.replace_self([nodes.title("", "", *sig.children)])
+        for content in new_node.findall(addnodes.desc_content):
+            content.replace_self(content.children)
 
-        return [self.indexnode, node]
+        return [indexnode, new_node]
 
-    def handle_signature(self, sig, signode):
+    def get_signatures(self) -> List[str]:
+        signatures = super().get_signatures()
+        if len(signatures) > 1:
+            logger.warning("Multiple signatures not supported")
+        return signatures[:1]
+
+    def handle_signature(self, sig: str, signode: desc_signature) -> str:
+        """Transform a "signature" (i.e. name for this thing) into RST nodes.
+
+        Return URI of the thing.
+        """
+        uri = parse_uri(self.config, sig)
+        signode["uri"] = uri
+
+        # XXX is there is a better desc_XXX node for this?
         signode += nodes.emphasis(self.signature_prefix, self.signature_prefix)
         signode += addnodes.desc_name(sig, sig)
         if "label" in self.options:
-            signode += nodes.emphasis(
+            signode += addnodes.desc_addname(
                 self.options["label"], " / " + self.options["label"]
             )
-        return sig
 
-    def _system_id_link(self, sys_id, within=None):
-        """Insert a cross reference to another object/process."""
-        refnode = addnodes.pending_xref('', refdomain="system", refexplicit=False,
-                                        reftype="ref", reftarget=sys_id)
-        refnode += nodes.inline(sys_id, sys_id)
-        if within is not None:
-            wrapper = within("", "")
-            wrapper += refnode
-            return wrapper
-        return refnode
+        g = self.env.get_domain("system").get_graph(self.env.docname)
+        self.define_graph(g, uri, sig)
+
+        return uri
 
 
 class Process(SystemObjectDescription):
-    # has_content = True
-    # required_arguments = 1
     option_spec = {
         "label": directives.unchanged_required,
         "become_parent": directives.flag,
@@ -379,79 +349,70 @@ class Process(SystemObjectDescription):
     }
     signature_prefix = "Process: "
 
-    def transform_content(self, contentnode):
-        # XXX Should refactor this to reduce duplication and/or read from the
-        # graph
-        defs = self.options.get("defs", "")
-        consumes, produces = expand_consumes_produces_amounts(
-            defs, self.options.get("consumes", []), self.options.get("produces", []))
-
-        if consumes:
-            contentnode += nodes.paragraph("Consumes: ", "Consumes: ")
-            contentnode += self._recipe_table(consumes)
-        if produces:
-            contentnode += nodes.paragraph("Produces: ", "Produces: ")
-            contentnode += self._recipe_table(produces)
-        if hasattr(self.env, "probs_parent") and self.env.probs_parent:
-            _, _, parent_id = self.env.probs_parent[-1].rpartition("/")
-            p = nodes.paragraph("", "Parent: ")
-            p += self._system_id_link(parent_id)
-            contentnode += p
-
-    def _recipe_table(self, objects):
-        header_rows = [[nodes.literal("", "Object"), nodes.literal("", "Amount")]]
-        table_data = [
-            [self._system_id_link(obj["object"], nodes.paragraph),
-             nodes.literal("", "%.1f %s" % (obj["amount"], obj["unit"]))
-             if "amount" in obj else ""]
-            for obj in objects
-        ]
-        return build_table_from_list(header_rows + table_data, header_rows=1)
-
     def get_nesting_depth(self):
-        if hasattr(self.env, "probs_parent"):
-            return len(self.env.probs_parent)
-        return 0
+        return len(self.env.ref_context.get('system:processes', []))
 
-    def add_target_and_index(self, name_cls, sig, signode):
-        # print('add_target_and_index', name_cls, sig, signode)
-        # print(self.options)
-        signode["ids"].append("process" + "-" + sig)
-        if "noindex" not in self.options:
-            recipes = self.env.get_domain("system")
-            recipes.add_process(
-                sig,
-                self.options.get("consumes", []),
-                self.options.get("produces", []),
-            )
+    def add_target_and_index(self, uri, sig, signode):
+        node_id = make_id(self.env, self.state.document, '', uri)
+        signode["ids"].append(node_id)
+        domain = cast(SystemDomain, self.env.get_domain("system"))
+        # XXX maybe label should come from RDF later
+        domain.note_thing(
+            uri, "process", self.options.get("label", sig), node_id, location=signode
+        )
+        # XXX avoid parse_uri too many times?
+        domain.note_process_recipe(
+            uri,
+            [parse_uri(self.config, obj["object"]) for obj in self.options.get("consumes", [])],
+            [parse_uri(self.config, obj["object"]) for obj in self.options.get("produces", [])],
+        )
 
-    def define_graph(self, uri_str):
-        g = get_or_setup_graph(self.env, self.config)
+    def before_content(self):
+        """Handle object nesting before content."""
+        if self.names:
+            uri = self.names[-1]
+            self.env.ref_context["system:process"] = uri
+            parents = self.env.ref_context.setdefault("system:processes", [])
+            parents.append(uri)
 
-        if not hasattr(self.env, "probs_parent"):
-            self.env.probs_parent = []
+    def transform_content(self, contentnode):
+        if self.names:
+            uri = self.names[0]
+            info = probs_process_info("", uri=uri)
+            contentnode.insert(0, info)
 
-        uri = parse_uri(self.config, uri_str)
+    def after_content(self):
+        """Handle object de-nesting after content."""
+        parents = self.env.ref_context.setdefault("system:processes", [])
+        if parents and "become_parent" not in self.options:
+            parents.pop()
+        self.env.ref_context["system:process"] = (
+            parents[-1] if parents else None
+        )
+
+    def define_graph(self, g, uri, sig: str):
+        label = self.options.get("label", sig)
 
         g.add((uri, RDF.type, PROBS.Process))
-        if "label" in self.options:
-            g.add((uri, RDFS.label, Literal(self.options["label"])))
-            g.add((uri, PROBS.processName, Literal(self.options["label"])))
-        else:
-            g.add((uri, RDFS.label, Literal(uri_str)))
-            g.add((uri, PROBS.processName, Literal(uri_str)))
+        g.add((uri, RDFS.label, Literal(label)))
+        g.add((uri, PROBS.processName, Literal(label)))
 
         # ComposedOf relationships
-        if self.env.probs_parent:
-            g.add((self.env.probs_parent[-1], PROBS.processComposedOf, uri))
+        # determine parent
+        if "parent" in self.options:
+            parent = parse_uri(self.config, self.options["parent"])
+        else:
+            parent = self.env.ref_context.get("system:process")
+        if parent:
+            g.add((parent, PROBS.processComposedOf, uri))
         for child in self.options.get("composed_of", []):
             if child.startswith("*"):
                 # include children of the named process -- this is expanded
                 # later as a postprocessing step once all processes are defined.
-                child_uri = self.SYS[child[1:]]
+                child_uri = parse_uri(self.config, child[1:])
                 g.add((uri, PROBS.processComposedOfChildrenOf, child_uri))
             else:
-                child_uri = self.SYS[child]
+                child_uri = parse_uri(self.config, child)
                 g.add((uri, PROBS.processComposedOf, child_uri))
 
         # Recipes (inputs and outputs)
@@ -470,10 +431,6 @@ class Process(SystemObjectDescription):
                 g.add((recipe, PROBS_RECIPE.consumes, item))
             for item in recipe_produces:
                 g.add((recipe, PROBS_RECIPE.produces, item))
-
-        if "become_parent" in self.options:
-            # print("xxx become parent")
-            self.env.probs_parent.append(uri)
 
 
 def _process_inputs_outputs(g, config, uri, relation, objects, recipe_items):
@@ -549,65 +506,71 @@ class Object(SystemObjectDescription):
         "label": directives.unchanged,
         "become_parent": directives.flag,
         "parent_object": directives.unchanged,
+        "composed_of": parse_composed_of,
         "traded": parse_traded,
         "equivalent": parse_equivalent,
     }
     signature_prefix = "Object: "
 
-    # def handle_signature(self, sig, signode):
-    #     signode += nodes.emphasis("Object: ", "Object: ")
-    #     signode += addnodes.desc_name(sig, sig)
-    #     if "label" in self.options:
-    #         signode += addnodes.desc_addname(self.options["label"],
-    #                                          self.options["label"])
-    #     return sig
+    def get_nesting_depth(self):
+        return len(self.env.ref_context.get("system:objects", []))
+
+    def add_target_and_index(self, uri, sig, signode):
+        node_id = make_id(self.env, self.state.document, '', uri)
+        signode["ids"].append(node_id)
+        domain = cast(SystemDomain, self.env.get_domain("system"))
+        # XXX maybe label should come from RDF later
+        domain.note_thing(
+            uri, "object", self.options.get("label", sig), node_id, location=signode
+        )
+
+    def before_content(self):
+        """Handle object nesting before content."""
+        if self.names:
+            uri = self.names[-1]
+            self.env.ref_context["system:object"] = uri
+            parents = self.env.ref_context.setdefault("system:objects", [])
+            parents.append(uri)
 
     def transform_content(self, contentnode):
-        if hasattr(self.env, "probs_parent_object") and self.env.probs_parent_object:
-            _, _, parent_id = self.env.probs_parent_object[-1].rpartition("/")
-            p = nodes.paragraph("", "Parent: ")
-            p += self._system_id_link(parent_id)
-            contentnode += p
+        if self.names:
+            uri = self.names[0]
+            info = probs_object_info("", uri=uri)
+            contentnode.insert(0, info)
 
-    def get_nesting_depth(self):
-        if hasattr(self.env, "probs_parent_object"):
-            return len(self.env.probs_parent_object)
-        return 0
+    def after_content(self):
+        """Handle object de-nesting after content."""
+        parents = self.env.ref_context.setdefault("system:objects", [])
+        if parents and "become_parent" not in self.options:
+            parents.pop()
+        self.env.ref_context["system:object"] = (
+            parents[-1] if parents else None
+        )
 
-    def add_target_and_index(self, name_cls, sig, signode):
-        # print('add_target_and_index', name_cls, sig, signode)
-        # print(self.options)
-        signode["ids"].append("object" + "-" + sig)
-        if "noindex" not in self.options:
-            recipes = self.env.get_domain("system")
-            recipes.add_object(sig, [])
-
-    def define_graph(self, uri_str):
-        g = get_or_setup_graph(self.env, self.config)
-
-        if not hasattr(self.env, "probs_parent_object"):
-            self.env.probs_parent_object = []
-
-        uri = self.parse_uri(uri_str)
+    def define_graph(self, g, uri, sig: str):
+        label = self.options.get("label", sig)
 
         g.add((uri, RDF.type, PROBS.Object))
         g.add((uri, RDF.type, PROBS.ReferenceObject))
-        if "label" in self.options:
-            g.add((uri, RDFS.label, Literal(self.options["label"])))
-            g.add((uri, PROBS.objectName, Literal(self.options["label"])))
-        else:
-            g.add((uri, RDFS.label, Literal(uri_str)))
-            g.add((uri, PROBS.objectName, Literal(uri_str)))
+        g.add((uri, RDFS.label, Literal(label)))
+        g.add((uri, PROBS.processName, Literal(label)))
 
+        # ComposedOf relationships
         if "parent_object" in self.options:
-            parent_uri = parse_uri(self.config, self.options["parent_object"])
-            g.add((parent_uri, PROBS.objectComposedOf, uri))
-        elif self.env.probs_parent_object:
-            g.add((self.env.probs_parent_object[-1], PROBS.objectComposedOf, uri))
-
-        if "become_parent" in self.options:
-            # print("xxx become parent object")
-            self.env.probs_parent_object.append(uri)
+            parent = parse_uri(self.config, self.options["parent_object"])
+        else:
+            parent = self.env.ref_context.get("system:object")
+        if parent:
+            g.add((parent, PROBS.objectComposedOf, uri))
+        for child in self.options.get("composed_of", []):
+            if child.startswith("*"):
+                # include children of the named object -- this is expanded later
+                # as a postprocessing step once all processes are defined.
+                child_uri = parse_uri(self.config, child[1:])
+                g.add((uri, PROBS.objectComposedOfChildrenOf, child_uri))
+            else:
+                child_uri = parse_uri(self.config, child)
+                g.add((uri, PROBS.objectComposedOf, child_uri))
 
         if "traded" in self.options:
             imp, exp = self.options["traded"]
@@ -620,7 +583,6 @@ class Object(SystemObjectDescription):
             for item in self.options["equivalent"]:
                 item_uri = self.parse_uri(item)
                 g.add((uri, PROBS.objectEquivalentTo, item_uri))
-
 
     def parse_uri(self, item):
         """Convert a string to a URIRef.
@@ -640,68 +602,74 @@ class Object(SystemObjectDescription):
 class ObjectIndex(Index):
     """Index of objects."""
 
-    name = "object"
+    name = "objectindex"
     localname = "Object Index"
-    shortname = "Object"
+    shortname = "objects"
 
     def generate(self, docnames=None):
         content = defaultdict(list)
 
         objects = {
-            name: (dispname, typ, docname, anchor)
-            for name, dispname, typ, docname, anchor, _ in self.domain.data["objects"]
+            uri: thing
+            for uri, thing in self.domain.things.items()
+            if thing.thing_type == "object"
         }
         processes = {
-            name: (dispname, typ, docname, anchor)
-            for name, dispname, typ, docname, anchor, _ in self.domain.data["processes"]
+            uri: thing
+            for uri, thing in self.domain.things.items()
+            if thing.thing_type == "process"
         }
-        process_consumes = self.domain.data["process_consumes"]
-        process_produces = self.domain.data["process_produces"]
+        # processes = {
+        #     name: (dispname, typ, docname, anchor)
+        #     for name, dispname, typ, docname, anchor, _ in self.domain.data["processes"]
+        # }
+        process_recipe = self.domain.process_recipe
         object_processes = defaultdict(list)
 
         # Add the objects initially; this is necessary for any objects which are
         # NOT linked to processes to be included.
-        for obj in objects.values():
-            dispname = obj[0]
-            object_processes[dispname] = []
+        for obj_uri in objects:
+            object_processes[obj_uri] = []
 
         # Add in all the places that an object is consumed or produced by a
         # process
-        for process_name, objs in process_consumes.items():
-            for obj in objs:
-                if ("object." + obj["object"]) not in objects:
+        for process_uri, objs in process_recipe.items():
+            if process_uri not in processes:
+                logger.error(
+                    "Process %s that %s object %s is not defined",
+                    process_uri,
+                    direction,
+                    obj_uri,
+                    # location=(self.env.docname, self.lineno)
+                )
+                continue
+            for obj_uri, direction in objs:
+                if obj_uri not in objects:
                     logger.error(
-                        "Object %s consumed by process %s is not defined",
-                        obj["object"],
-                        process_name,
+                        "Object %s %s by process %s is not defined",
+                        obj_uri,
+                        direction[:-1] + "d",
+                        process_uri,
                         # location=(self.env.docname, self.lineno)
                     )
                     continue
-                object_processes[obj["object"]].append((process_name, "consumed"))
-        for process_name, objs in process_produces.items():
-            for obj in objs:
-                if ("object." + obj["object"]) not in objects:
-                    logger.error(
-                        "Object %s produced by process %s is not defined",
-                        obj["object"],
-                        process_name,
-                        # location=(self.env.docname, self.lineno)
-                    )
-                    continue
-                object_processes[obj["object"]].append((process_name, "produced"))
+                object_processes[obj_uri].append((process_uri, direction))
 
         # convert the mapping of objects to processes to produce the expected
         # output, shown below, using the object name as a key to group
         #
         # name, subtype, docname, anchor, extra, qualifier, description
-        for obj, process_names in object_processes.items():
-            dispname, typ, docname, anchor = objects["object." + obj]
-            k = dispname[0].lower()
-            content[k].append((dispname, 1, docname, anchor, docname, "", typ))
+        for obj_uri, process_uris in object_processes.items():
+            obj = objects[obj_uri]
+            k = obj.label.upper()[0]
+            content[k].append((obj.label, 1, obj.docname, obj.node_id, obj.docname, "", obj.thing_type))
 
-            for process_name, direction in process_names:
-                dispname, typ, docname, anchor = processes[process_name]
-                content[k].append((dispname, 2, docname, anchor, direction, "", typ))
+            for process_uri, direction in process_uris:
+                if process_uri in processes:
+                    p = processes[process_uri]
+                    content[k].append((p.label, 2, p.docname, p.node_id, direction, "", p.thing_type))
+                else:
+                    logger.debug("Missing process in domain: %s", process_uri)
 
         # convert the dict to the sorted list of tuples expected
         content = sorted(content.items())
@@ -712,24 +680,28 @@ class ObjectIndex(Index):
 class ProcessIndex(Index):
     """Index of processes."""
 
-    name = "process"
+    name = "processindex"
     localname = "Process Index"
-    shortname = "Process"
+    shortname = "processes"
 
     def generate(self, docnames=None):
         content = defaultdict(list)
 
         # sort the list of processes in alphabetical order
-        processes = self.domain.data["processes"]
-        processes = sorted(processes, key=lambda process: process[0])
+        processes = {
+            uri: thing
+            for uri, thing in self.domain.things.items()
+            if thing.thing_type == "process"
+        }
 
         # generate the expected output, shown below, from the above using the
         # first letter of the recipe as a key to group thing
         #
         # name, subtype, docname, anchor, extra, qualifier, description
-        for name, dispname, typ, docname, anchor, _ in processes:
-            content[dispname[0].lower()].append(
-                (dispname, 0, docname, anchor, docname, "", typ)
+        for process_uri, thing in processes.items():
+            k = thing.label.upper()[0]
+            content[k].append(
+                (thing.label, 0, thing.docname, thing.node_id, thing.docname, "", thing.thing_type)
             )
 
         # convert the dict to the sorted list of tuples expected
@@ -738,128 +710,174 @@ class ProcessIndex(Index):
         return content, True
 
 
+class ThingEntry(NamedTuple):
+    docname: str
+    node_id: str
+    thing_type: str
+    label: str
+
+
 class SystemDomain(Domain):
 
     name = "system"
     label = "System definition"
+
+    # These are the different types of things that we can keep track of, and
+    # which roles can cross-reference to them.
     object_types = {
-        'Process': ObjType(_('process'), 'ref'),
-        'Object':  ObjType(_('object'),  'ref'),
+        'process': ObjType(_('process'), 'ref'),
+        'object':  ObjType(_('object'),  'ref'),
     }
-    roles = {"ref": XRefRole()}
+    roles = {
+        "ref": XRefRole()
+    }
     directives = {
         "process": Process,
         "object": Object,
-        # 'startSubProcesses': StartSubProcessesDirective,
+        "object-equivalent-to": ObjectEquivalentTo,
     }
     indices = [ProcessIndex, ObjectIndex]
     initial_data: dict = {
-        "processes": [],  # object list
-        "objects": [],  # object list
-        "process_consumes": {},
-        "process_produces": {},
+        "things": {},
+        "process_recipe": {},
+        "graph": None,
     }
 
+    ### Keeping track of where things are defined
+
+    @property
+    def things(self) -> Dict[str, ThingEntry]:
+        return self.data.setdefault('things', {})  # uri -> ThingEntry
+
+    @property
+    def graph(self) -> ConjunctiveGraph:
+        if self.data.get("graph") is None:
+            g = self.data["graph"] = ConjunctiveGraph()
+            config = self.env.config
+            g.bind("sys", Namespace(config.probs_rdf_system_prefix))
+            g.bind("probs", PROBS)
+            g.bind("rec", PROBS_RECIPE)
+            for prefix, uri in config.probs_rdf_extra_prefixes.items():
+                g.bind(prefix, uri)
+        return self.data["graph"]
+
+    @property
+    def process_recipe(self) -> Dict[str, list]:
+        return self.data.setdefault('process_recipe', {})  # uri -> list
+
+    def get_graph(self, graph_id):
+        return self.graph.get_context(graph_id)
+
+    def note_thing(self, uri: str, thing_type: str, label: str, node_id: str, location: Any = None):
+        """Note the definition of a thing (what Sphinx calls an "object")."""
+        if uri in self.things:
+            # duplicated
+            other = self.things[uri]
+            logger.warning(__('duplicate description of %s, '
+                              'other instance in %s, use :noindex: for one of them'),
+                           uri, other.docname, location=location)
+        self.things[uri] = ThingEntry(self.env.docname, node_id, thing_type, label)
+
+    def note_process_recipe(self, uri: str, consumes: list, produces: list):
+        self.process_recipe[uri] = (
+            [(k, "consumes") for k in consumes] +
+            [(k, "produces") for k in produces]
+        )
+
+    def clear_doc(self, docname: str) -> None:
+        for uri, thing in list(self.things.items()):
+            if thing.docname == docname:
+                del self.things[uri]
+
+        g = self.get_graph(docname)
+        g.remove((None, None, None))
+
+    def merge_domaindata(self, docnames: List[str], otherdata: Dict) -> None:
+        # XXX check duplicates?
+        for uri, thing in otherdata['things'].items():
+            if thing.docname in docnames:
+                self.things[uri] = thing
+        if "graph" in otherdata:
+            self.graph += otherdata["graph"]
+
+    def find_thing(
+        self,
+        name: str,
+        base_uri: Optional[str] = None,
+        current_thing: Optional[str] = None,
+        thing_type: Optional[str] = None,
+    ) -> List[Tuple[str, ThingEntry]]:
+        """Find a thing definition for "name", perhaps using the configured
+        prefixes. Returns a list of (uri, thing entry) tuples.
+        """
+        # XXX this could be more flexible, e.g. parsing prefixes, allowing
+        # relative URIs or absolute URIs -- or looking first for names that
+        # feature within the current process's inputs or outputs.
+
+        if thing_type is None:
+            thing_types = list(self.object_types)
+        else:
+            thing_types = self.objtypes_for_role(thing_type)
+
+        matches = [
+            (uri, thing)
+            for uri, thing in self.things.items()
+            if uri.endswith(name) and thing.thing_type in thing_types
+        ]
+
+        return matches
+
+    def resolve_xref(
+        self,
+        env: BuildEnvironment,
+        fromdocname: str,
+        builder: Builder,
+        thing_type: str,
+        target: str,
+        node: pending_xref,
+        contnode: Element,
+    ) -> Optional[Element]:
+
+        matches = self.find_thing(target, thing_type=thing_type)
+
+        if not matches:
+            return None
+        elif len(matches) > 1:
+            logger.warning(__('more than one target found for cross-reference %r: %s'),
+                           target, ', '.join(match[0] for match in matches),
+                           type='ref', subtype='system', location=node)
+        uri, thing = matches[0]
+
+        # determine the content of the reference by conditions
+        content = find_pending_xref_condition(node, 'resolved')
+        if content:
+            children = content.children
+        else:
+            # if not found, use contnode
+            children = [contnode]
+
+        return make_refnode(builder, fromdocname, thing.docname, thing.node_id, children, uri)
+
+    # TODO: implement `resolve_any_xref`?
+
+    def get_objects(self) -> Iterator[Tuple[str, str, str, str, str, int]]:
+        # Returns:
+        # - name: fully qualified name
+        # - dispname: Name to display when searching/linking.
+        # - type: Object type, a key in ``self.object_types``
+        # - docname: The document where it is to be found.
+        # - anchor: The anchor name for the object.
+        # - priority: determines placement in search results:
+        #   1 = default (before full-text matches)
+        #   0 = important (before default-priority)
+        #   2 = unimportant (after full-text matches)
+        #   -1 = don't show in search at all
+
+        for uri, thing in self.things.items():
+            yield (uri, thing.label, thing.thing_type, thing.docname, thing.node_id, 1)
+
     def get_full_qualified_name(self, node):
+        # XXX Fix me to return URI
         if node.get("refdomain") == "system":
             return "{}.{}".format("system", node.get("reftarget"))
         return None
-
-    def get_objects(self):
-        for obj in self.data["processes"]:
-            yield (obj)
-        for obj in self.data["objects"]:
-            yield (obj)
-
-    def resolve_xref(self, env, fromdocname, builder, typ, target, node, contnode):
-        match = [
-            (docname, anchor)
-            for name, sig, typ, docname, anchor, prio in self.get_objects()
-            if sig == target
-        ]
-
-        if len(match) > 0:
-            todocname = match[0][0]
-            targ = match[0][1]
-
-            # print("system domain: found %s %s %r xref" % (todocname, targ, target))
-            return make_refnode(builder, fromdocname, todocname, targ, contnode, targ)
-
-        return None
-
-    def add_process(self, signature, consumes, produces):
-        """Add a new process to the domain."""
-        name = "{}.{}".format("process", signature)
-        anchor = "process-{}".format(signature)
-
-        # self.data['recipe_ingredients'][name] = ingredients
-        # name, dispname, type, docname, anchor, priority
-        self.data["processes"].append(
-            (name, signature, "Process", self.env.docname, anchor, 0)
-        )
-        self.data["process_consumes"][name] = consumes
-        self.data["process_produces"][name] = produces
-
-    def add_object(self, signature, ingredients):
-        """Add a new object to the domain."""
-        name = "{}.{}".format("object", signature)
-        anchor = "object-{}".format(signature)
-
-        # self.data['recipe_ingredients'][name] = ingredients
-        # name, dispname, type, docname, anchor, priority
-        self.data["objects"].append(
-            (name, signature, "Object", self.env.docname, anchor, 0)
-        )
-
-
-# Adapted from docutils ListTable directive
-def build_table_from_list(table_data,
-                          # col_widths,
-                          header_rows, stub_columns=0, widths="auto"):
-    """
-    :param table_data: list of lists giving table data
-    :param header_rows: list of header rows
-    :param stub_columns: number of columns to mark as "stubs"
-    """
-
-    table = nodes.table()
-
-    max_cols = len(table_data[0])
-    col_widths = [100 // max_cols] * max_cols
-    # if widths == 'auto':
-    #     table['classes'] += ['colwidths-auto']
-    # elif widths: # "grid" or list of integers
-    #     table['classes'] += ['colwidths-given']
-    table['classes'] += ['colwidths-auto']
-
-    tgroup = nodes.tgroup(cols=max_cols)
-    table += tgroup
-
-    for col_width in col_widths:
-        colspec = nodes.colspec()
-        # if col_width is not None:
-        #     colspec.attributes['colwidth'] = col_width
-        if stub_columns:
-            colspec.attributes['stub'] = 1
-            stub_columns -= 1
-        tgroup += colspec
-
-    rows = []
-    for row in table_data:
-        row_node = nodes.row()
-        for cell in row:
-            entry = nodes.entry()
-            entry += cell
-            row_node += entry
-        rows.append(row_node)
-
-    if header_rows:
-        thead = nodes.thead()
-        thead.extend(rows[:header_rows])
-        tgroup += thead
-
-    tbody = nodes.tbody()
-    tbody.extend(rows[header_rows:])
-    tgroup += tbody
-
-    return table

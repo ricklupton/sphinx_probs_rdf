@@ -1,6 +1,6 @@
 from os import path
 from sphinx.util.fileutil import copy_asset_file
-from typing import Any, Dict
+from typing import Any, Dict, cast
 from sphinx.application import Sphinx
 from sphinx.config import Config
 
@@ -13,7 +13,9 @@ from .directives import (
     EndSubProcessesDirective,
     EndSubObjectsDirective,
     TTL,
+    ObjectEquivalentTo,
 )
+from .resolve import ProbsTransform
 
 
 NB_RENDER_PRIORITY = {
@@ -37,6 +39,21 @@ def copy_custom_files(app, exc):
         staticdir = path.join(app.builder.outdir, '_static')
         here = path.dirname(__file__)
         copy_asset_file(path.join(here, '_static/system-definitions.css'), staticdir)
+
+
+def save_graph(app, exc):
+    if not exc:
+        assert app.builder
+        env = app.builder.env
+        assert env is not None
+        domain = cast(SystemDomain, env.get_domain("system"))
+        import os.path
+        from .postprocess import postprocess
+        filename = os.path.join(app.builder.outdir, 'output.ttl')
+        graph = domain.graph
+        postprocess(graph)
+        with open(filename, 'wb') as f:
+            graph.serialize(f, format="turtle")
 
 
 from rdflib import Namespace, URIRef  # type: ignore
@@ -77,6 +94,26 @@ def merge_default_config(app: Sphinx, config: Config):
             d[unit] = (scale, metric)
 
 
+def read_external_graph(app: Sphinx, config):
+    """Read in any data from external RDF files."""
+    paths = config.probs_rdf_paths
+    env = app.builder.env
+    domain = cast(SystemDomain, env.get_domain("system"))
+    g = domain.graph
+    for p in paths:
+        domain.graph.parse(location=p, format="ttl")
+
+    # Check if the external graph has duplicated any of our own prefix
+    # definitions
+    seen = set()
+    bound_namespaces = list(g.namespace_manager.namespaces())
+    g.namespace_manager.reset()
+    for prefix, ns in bound_namespaces:
+        if ns in seen:
+            g.bind(prefix, ns)
+        seen.add(ns)
+
+
 def setup(app: Sphinx) -> Dict[str, Any]:
     app.add_builder(ProbsSystemRDFBuilder)
     # Add config for jupyter-book / myst_nb.
@@ -94,12 +131,19 @@ def setup(app: Sphinx) -> Dict[str, Any]:
     app.add_directive("end-sub-processes", EndSubProcessesDirective)
     app.add_directive("end-sub-objects", EndSubObjectsDirective)
     app.add_directive("ttl", TTL)
+    app.add_directive("object-equivalent-to", ObjectEquivalentTo)
+
+    app.add_post_transform(ProbsTransform)
 
     # Since the graph is built when parsing, any change should trigger a rebuild
     app.add_config_value("probs_rdf_system_prefix", "", "env", [str])
     app.add_config_value("probs_rdf_extra_prefixes", {}, "env", [dict])
     app.add_config_value("probs_rdf_units", {}, "env", [dict])
+    app.add_config_value("probs_rdf_paths", [], "env", [list])
     app.connect('config-inited', merge_default_config)
+
+    app.connect("env-updated", read_external_graph)
+    app.connect('build-finished', save_graph)
 
     # Add the custom CSS for the directives
     app.connect('build-finished', copy_custom_files)
