@@ -31,28 +31,28 @@ dl.system.object dt p {
     .system.object.nested-1,
     .system.end-sub-objects.nested-1,
     .system.end-sub-processes.nested-1 {
-        margin-left: 1.5em;
+        margin-left: 1.5rem;
     }
 
     .system.process.nested-2,
     .system.object.nested-2,
     .system.end-sub-objects.nested-2,
     .system.end-sub-processes.nested-2  {
-        margin-left: 3em;
+        margin-left: 3.0rem;
     }
 
     .system.process.nested-3,
     .system.object.nested-3,
     .system.end-sub-objects.nested-3,
     .system.end-sub-processes.nested-3  {
-        margin-left: 4.5em;
+        margin-left: 4.5rem;
     }
 
     .system.process.nested-4,
     .system.object.nested-4,
     .system.end-sub-objects.nested-4,
     .system.end-sub-processes.nested-4 {
-        margin-left: 6em;
+        margin-left: 6.0rem;
     }
 }
 
@@ -92,6 +92,6 @@ dl.system.object dt p {
 }
 
 /* Fix issue with toggle dropdown admonitions not hiding tables */
-.toggle-hidden.admonition .admonition-title ~ table {
+.toggle-hidden.admonition .admonition-title ~ * {
   display: none;
 }
