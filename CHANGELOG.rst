@@ -1,6 +1,20 @@
 Changelog
 =========
 
+v0.4.0 (2023-04-20)
+-------------------
+
+Changes:
+- Use full URIs as object/process identifiers, so that we can link to their definitions using intersphinx. This changes the HTML anchors within pages.
+
+New features:
+- External RDF data with definitions can be read, and used to make cross-references.
+- New `object-equivalent-to` directive to declare `probs:objectEquivalentTo` relationships.
+
+Fixes:
+- Attempt to properly clear old data so that we can rebuild incrementally.
+
+
 v0.3.0 (2022-10-27)
 -------------------
 
