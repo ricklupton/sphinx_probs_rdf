@@ -553,7 +553,7 @@ class Object(SystemObjectDescription):
         g.add((uri, RDF.type, PROBS.Object))
         g.add((uri, RDF.type, PROBS.ReferenceObject))
         g.add((uri, RDFS.label, Literal(label)))
-        g.add((uri, PROBS.processName, Literal(label)))
+        g.add((uri, PROBS.objectName, Literal(label)))
 
         # ComposedOf relationships
         if "parent_object" in self.options:
