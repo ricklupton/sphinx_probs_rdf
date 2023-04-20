@@ -94,10 +94,9 @@ def merge_default_config(app: Sphinx, config: Config):
             d[unit] = (scale, metric)
 
 
-def read_external_graph(app: Sphinx, config):
+def read_external_graph(app: Sphinx, env):
     """Read in any data from external RDF files."""
-    paths = config.probs_rdf_paths
-    env = app.builder.env
+    paths = env.config.probs_rdf_paths
     domain = cast(SystemDomain, env.get_domain("system"))
     g = domain.graph
     for p in paths:
