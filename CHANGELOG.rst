@@ -1,6 +1,12 @@
 Changelog
 =========
 
+v0.4.1 (2023-05-04)
+-------------------
+
+Fixes:
+- Config paths `probs_rdf_paths` are now relative to the configuration directory.
+
 v0.4.0 (2023-04-20)
 -------------------
 

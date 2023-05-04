@@ -100,7 +100,7 @@ def read_external_graph(app: Sphinx, env):
     domain = cast(SystemDomain, env.get_domain("system"))
     g = domain.graph
     for p in paths:
-        domain.graph.parse(location=p, format="ttl")
+        domain.graph.parse(location=path.join(app.confdir, p), format="ttl")
 
     # Check if the external graph has duplicated any of our own prefix
     # definitions
