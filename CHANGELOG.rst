@@ -4,6 +4,9 @@ Changelog
 Unreleased
 ----------
 
+v0.4.2 (2023-05-10)
+-------------------
+
 Compatibility:
 - Now compatible with myst-nb version 0.14 (used by jupyter-book version 0.15).
 
