@@ -18,6 +18,7 @@ from .directives import (
 from .resolve import ProbsTransform
 
 
+# Old version
 NB_RENDER_PRIORITY = {
     "probs_rdf": (
         "application/vnd.jupyter.widget-view+json",
@@ -31,6 +32,12 @@ NB_RENDER_PRIORITY = {
         "text/plain",
     )
 }
+
+NB_RENDER_PRIORITY_NEW = [
+    (k, v, (1 + i) * 10)
+    for k, items in NB_RENDER_PRIORITY.items()
+    for i, v in enumerate(items)
+]
 
 
 
@@ -118,10 +125,18 @@ def setup(app: Sphinx) -> Dict[str, Any]:
     # Add config for jupyter-book / myst_nb.
     # See https://jupyterbook.org/advanced/advanced.html#enabling-a-custom-builder
     # -using-jupyter-book
-    if "nb_render_priority" in app.config:
+    #
+    # Older version -- kept for compatibility with myst-nb<0.14 for now
+    if (
+        "nb_render_priority" in app.config
+        and app.config["nb_render_priority"] != "--unset--"
+    ):
         app.config["nb_render_priority"]["probs_rdf"] = NB_RENDER_PRIORITY["probs_rdf"]
+    elif "nb_mime_priority_overrides" in app.config:
+        app.config["nb_mime_priority_overrides"] = NB_RENDER_PRIORITY_NEW
     else:
         app.add_config_value("nb_render_priority", NB_RENDER_PRIORITY, "probs_rdf")
+        app.add_config_value("nb_mime_priority_overrides", NB_RENDER_PRIORITY_NEW, "env")
 
     app.add_domain(SystemDomain)
 
