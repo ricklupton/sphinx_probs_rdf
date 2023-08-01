@@ -584,6 +584,13 @@ class Object(SystemObjectDescription):
                 item_uri = self.parse_uri(item)
                 g.add((uri, PROBS.objectEquivalentTo, item_uri))
 
+        # Define a process which represents the balancing market / control
+        # volume for this object
+        process_uri = URIRef(str(uri) + "_Market")
+        g.add((process_uri, RDF.type, PROBS.Process))
+        g.add((process_uri, PROBS.marketForObject, uri))
+        g.add((process_uri, RDFS.label, Literal(label)))
+
     def parse_uri(self, item):
         """Convert a string to a URIRef.
 
