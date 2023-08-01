@@ -642,17 +642,15 @@ class ObjectIndex(Index):
         # process
         for process_uri, objs in process_recipe.items():
             if process_uri not in processes:
-                logger.error(
-                    "Process %s that %s object %s is not defined",
+                logger.warning(
+                    "Process %s is not defined",
                     process_uri,
-                    direction,
-                    obj_uri,
                     # location=(self.env.docname, self.lineno)
                 )
                 continue
             for obj_uri, direction in objs:
                 if obj_uri not in objects:
-                    logger.error(
+                    logger.warning(
                         "Object %s %s by process %s is not defined",
                         obj_uri,
                         direction[:-1] + "d",
