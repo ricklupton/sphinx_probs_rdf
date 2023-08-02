@@ -4,6 +4,16 @@ Changelog
 Unreleased
 ----------
 
+v0.4.3 (2023-08-02)
+-------------------
+
+New features:
+- "Market" processes corresponding to objects are now defined in the RDF output. These are intended to represent the part of a system where supply, imports, exports and consumption of that object type may be balanced.
+
+Fixes:
+- Fix logging exception when definitions are missing in index-building code
+
+
 v0.4.2 (2023-05-10)
 -------------------
 
