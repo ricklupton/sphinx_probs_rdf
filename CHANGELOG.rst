@@ -4,6 +4,14 @@ Changelog
 Unreleased
 ----------
 
+BREAKING CHANGES:
+
+- Update to new PRObs ontology URIs: `http://w3id.org/probs-lab/ontology#` and `http://w3id.org/probs-lab/process-recipe#`.
+
+Fixes:
+
+- Pin maximum rdflib version to <= 6.1.1 pending update for full compatibility with version 6 (see [rdflib changelog](https://github.com/RDFLib/rdflib/blob/main/CHANGELOG.md#2022-07-16-release-620), pull request 1678).
+
 v0.4.3 (2023-08-02)
 -------------------
 
