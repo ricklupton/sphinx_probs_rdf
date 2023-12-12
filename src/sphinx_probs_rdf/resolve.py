@@ -1,9 +1,10 @@
 from typing import cast
+from warnings import warn
 from docutils import nodes
 from sphinx.transforms.post_transforms import SphinxPostTransform
 from sphinx import addnodes
 
-from rdflib import URIRef
+from rdflib import URIRef, namespace
 from sphinx_probs_rdf.directives import SystemDomain, PROBS, PROBS_RECIPE, QUANTITYKIND, rdf_reference, probs_process_info, probs_object_info
 
 class ProbsTransform(SphinxPostTransform):
@@ -74,7 +75,84 @@ def build_rdf_reference(g, node):
     )
     result += newnode
 
-    labels = g.preferredLabel(uri)
+    def preferredLabel(
+        subject,
+        lang=None,
+        default=None,
+        labelProperties=(namespace.SKOS.prefLabel, namespace.RDFS.label),
+    ):
+        """
+        Find the preferred label for subject.
+
+        By default prefers skos:prefLabels over rdfs:labels. In case at least
+        one prefLabel is found returns those, else returns labels. In case a
+        language string (e.g., "en", "de" or even "" for no lang-tagged
+        literals) is given, only such labels will be considered.
+
+        Return a list of (labelProp, label) pairs, where labelProp is either
+        skos:prefLabel or rdfs:label.
+
+        >>> from rdflib import ConjunctiveGraph, URIRef, Literal, namespace
+        >>> from pprint import pprint
+        >>> g = ConjunctiveGraph()
+        >>> u = URIRef("http://example.com/foo")
+        >>> g.add([u, namespace.RDFS.label, Literal("foo")])
+        >>> g.add([u, namespace.RDFS.label, Literal("bar")])
+        >>> pprint(sorted(g.preferredLabel(u)))
+        [(rdflib.term.URIRef('http://www.w3.org/2000/01/rdf-schema#label'),
+          rdflib.term.Literal('bar')),
+         (rdflib.term.URIRef('http://www.w3.org/2000/01/rdf-schema#label'),
+          rdflib.term.Literal('foo'))]
+        >>> g.add([u, namespace.SKOS.prefLabel, Literal("bla")])
+        >>> pprint(g.preferredLabel(u))
+        [(rdflib.term.URIRef('http://www.w3.org/2004/02/skos/core#prefLabel'),
+          rdflib.term.Literal('bla'))]
+        >>> g.add([u, namespace.SKOS.prefLabel, Literal("blubb", lang="en")])
+        >>> sorted(g.preferredLabel(u)) #doctest: +NORMALIZE_WHITESPACE
+        [(rdflib.term.URIRef('http://www.w3.org/2004/02/skos/core#prefLabel'),
+          rdflib.term.Literal('bla')),
+          (rdflib.term.URIRef('http://www.w3.org/2004/02/skos/core#prefLabel'),
+          rdflib.term.Literal('blubb', lang='en'))]
+        >>> g.preferredLabel(u, lang="") #doctest: +NORMALIZE_WHITESPACE
+        [(rdflib.term.URIRef('http://www.w3.org/2004/02/skos/core#prefLabel'),
+          rdflib.term.Literal('bla'))]
+        >>> pprint(g.preferredLabel(u, lang="en"))
+        [(rdflib.term.URIRef('http://www.w3.org/2004/02/skos/core#prefLabel'),
+          rdflib.term.Literal('blubb', lang='en'))]
+        """
+        warn(
+            DeprecationWarning(
+                "graph.preferredLabel() is deprecated and will be removed in rdflib 6.0.0."
+            )
+        )
+        if default is None:
+            default = []
+
+        # setup the language filtering
+        if lang is not None:
+            if lang == "":  # we only want not language-tagged literals
+
+                def langfilter(l_):
+                    return l_.language is None
+
+            else:
+
+                def langfilter(l_):
+                    return l_.language == lang
+
+        else:  # we don't care about language tags
+
+            def langfilter(l_):
+                return True
+
+        for labelProp in labelProperties:
+            labels = list(filter(langfilter, g.objects(subject, labelProp)))
+            if len(labels) == 0:
+                continue
+            else:
+                return [(labelProp, l_) for l_ in labels]
+        return default
+    labels = preferredLabel(uri)
     if labels:
         result += nodes.Text(" (" + ", ".join(label for _, label in labels) + ")")
 
