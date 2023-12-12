@@ -221,8 +221,8 @@ class EndSubObjectsDirective(SphinxDirective):
         return [paragraph_node]
 
 
-PROBS = Namespace("https://ukfires.org/probs/ontology/")
-PROBS_RECIPE = Namespace("https://ukfires.org/probs/ontology/recipe/")
+PROBS = Namespace("http://w3id.org/probs-lab/ontology#")
+PROBS_RECIPE = Namespace("http://w3id.org/probs-lab/ontology#recipe/")
 QUANTITYKIND = Namespace("http://qudt.org/vocab/quantitykind/")
 
 
