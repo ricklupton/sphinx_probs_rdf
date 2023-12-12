@@ -222,7 +222,7 @@ class EndSubObjectsDirective(SphinxDirective):
 
 
 PROBS = Namespace("http://w3id.org/probs-lab/ontology#")
-PROBS_RECIPE = Namespace("http://w3id.org/probs-lab/ontology#recipe/")
+PROBS_RECIPE = Namespace("http://w3id.org/probs-lab/process-recipe#")
 QUANTITYKIND = Namespace("http://qudt.org/vocab/quantitykind/")
 
 
