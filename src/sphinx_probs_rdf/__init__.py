@@ -3,6 +3,7 @@ from sphinx.util.fileutil import copy_asset_file
 from typing import Any, Dict, cast
 from sphinx.application import Sphinx
 from sphinx.config import Config
+from rdflib import Namespace, URIRef  # type: ignore
 
 from .version import __version__
 from .builder import ProbsSystemRDFBuilder
@@ -40,12 +41,11 @@ NB_RENDER_PRIORITY_NEW = [
 ]
 
 
-
 def copy_custom_files(app, exc):
-    if app.builder.format == 'html' and not exc:
-        staticdir = path.join(app.builder.outdir, '_static')
+    if app.builder.format == "html" and not exc:
+        staticdir = path.join(app.builder.outdir, "_static")
         here = path.dirname(__file__)
-        copy_asset_file(path.join(here, '_static/system-definitions.css'), staticdir)
+        copy_asset_file(path.join(here, "_static/system-definitions.css"), staticdir)
 
 
 def save_graph(app, exc):
@@ -56,14 +56,14 @@ def save_graph(app, exc):
         domain = cast(SystemDomain, env.get_domain("system"))
         import os.path
         from .postprocess import postprocess
-        filename = os.path.join(app.builder.outdir, 'output.ttl')
+
+        filename = os.path.join(app.builder.outdir, "output.ttl")
         graph = domain.graph
         postprocess(graph)
-        with open(filename, 'wb') as f:
+        with open(filename, "wb") as f:
             graph.serialize(f, format="turtle")
 
 
-from rdflib import Namespace, URIRef  # type: ignore
 QUANTITYKIND = Namespace("http://qudt.org/vocab/quantitykind/")
 DEFAULT_UNIT_METRICS = {
     "kg": (1, QUANTITYKIND.Mass),
@@ -136,7 +136,9 @@ def setup(app: Sphinx) -> Dict[str, Any]:
         app.config["nb_mime_priority_overrides"] = NB_RENDER_PRIORITY_NEW
     else:
         app.add_config_value("nb_render_priority", NB_RENDER_PRIORITY, "probs_rdf")
-        app.add_config_value("nb_mime_priority_overrides", NB_RENDER_PRIORITY_NEW, "env")
+        app.add_config_value(
+            "nb_mime_priority_overrides", NB_RENDER_PRIORITY_NEW, "env"
+        )
 
     app.add_domain(SystemDomain)
 
@@ -154,14 +156,14 @@ def setup(app: Sphinx) -> Dict[str, Any]:
     app.add_config_value("probs_rdf_extra_prefixes", {}, "env", [dict])
     app.add_config_value("probs_rdf_units", {}, "env", [dict])
     app.add_config_value("probs_rdf_paths", [], "env", [list])
-    app.connect('config-inited', merge_default_config)
+    app.connect("config-inited", merge_default_config)
 
     app.connect("env-updated", read_external_graph)
-    app.connect('build-finished', save_graph)
+    app.connect("build-finished", save_graph)
 
     # Add the custom CSS for the directives
-    app.connect('build-finished', copy_custom_files)
-    app.add_css_file('system-definitions.css')
+    app.connect("build-finished", copy_custom_files)
+    app.add_css_file("system-definitions.css")
 
     return {
         "version": __version__,

@@ -1,5 +1,5 @@
 import os.path
-from typing import Set, cast
+from typing import Set, cast, Optional
 
 from docutils.nodes import Node
 from sphinx.builders import Builder
@@ -20,7 +20,7 @@ class ProbsSystemRDFBuilder(Builder):
     epilog = __('System definitions written to '
                 '%(outdir)s/output.ttl')
 
-    def get_target_uri(self, docname: str, typ: str = None) -> str:
+    def get_target_uri(self, docname: str, typ: Optional[str] = None) -> str:
         return ''
 
     def get_outdated_docs(self) -> Set[str]:

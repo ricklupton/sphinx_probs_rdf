@@ -4,11 +4,18 @@ from sphinx.transforms.post_transforms import SphinxPostTransform
 from sphinx import addnodes
 
 from rdflib import URIRef, namespace
-from sphinx_probs_rdf.directives import SystemDomain, PROBS, PROBS_RECIPE, QUANTITYKIND, rdf_reference, probs_process_info, probs_object_info
+from sphinx_probs_rdf.directives import (
+    SystemDomain,
+    PROBS,
+    PROBS_RECIPE,
+    rdf_reference,
+    probs_process_info,
+    probs_object_info,
+)
+
 
 class ProbsTransform(SphinxPostTransform):
-    """Transform to fill in details of PRObs objects.
-    """
+    """Transform to fill in details of PRObs objects."""
 
     # Run early on, before references are resolved
     default_priority = 1
@@ -59,12 +66,12 @@ def build_rdf_reference(g, node):
     uri = URIRef(node["target"])
     n3 = uri.n3(g.namespace_manager)
     contnodes = [
-        addnodes.pending_xref_condition('', n3, condition='resolved'),
-        addnodes.pending_xref_condition('', "[UNKNOWN!] " + n3, condition='*')
+        addnodes.pending_xref_condition("", n3, condition="resolved"),
+        addnodes.pending_xref_condition("", "[UNKNOWN!] " + n3, condition="*"),
     ]
     result = nodes.inline("", "")
     newnode = addnodes.pending_xref(
-        '',
+        "",
         *contnodes,
         refdomain="system",
         reftarget=str(uri),
@@ -120,6 +127,7 @@ def build_rdf_reference(g, node):
             else:
                 return [(labelProp, l_) for l_ in labels]
         return default
+
     labels = preferredLabel(uri)
     if labels:
         result += nodes.Text(" (" + ", ".join(label for _, label in labels) + ")")
@@ -139,7 +147,7 @@ def build_process_info(g, info_node):
                 "amount": float(g.value(item, PROBS_RECIPE.quantity)),
                 "metric": g.value(item, PROBS_RECIPE.metric),
             }
-            for item in g[recipe:PROBS_RECIPE.consumes:]
+            for item in g[recipe : PROBS_RECIPE.consumes :]
         ]
         produces_data = [
             {
@@ -147,7 +155,7 @@ def build_process_info(g, info_node):
                 "amount": float(g.value(item, PROBS_RECIPE.quantity)),
                 "metric": g.value(item, PROBS_RECIPE.metric),
             }
-            for item in g[recipe:PROBS_RECIPE.produces:]
+            for item in g[recipe : PROBS_RECIPE.produces :]
         ]
         contentnode += nodes.paragraph("Consumes: ", "Consumes: ")
         contentnode += _recipe_table(g, consumes_data)
@@ -157,7 +165,7 @@ def build_process_info(g, info_node):
         # XXX TODO: show consumes and produces without recipe
         pass
 
-    parents = list(g[:PROBS.processComposedOf:uri])
+    parents = list(g[: PROBS.processComposedOf : uri])
     if parents:
         p = nodes.paragraph("", "Parents:")
         for parent in parents:
@@ -165,7 +173,7 @@ def build_process_info(g, info_node):
             p += _system_id_link(g, parent)
         contentnode += p
 
-    children = list(g[uri:PROBS.processComposedOf:])
+    children = list(g[uri : PROBS.processComposedOf :])
     if children:
         p = nodes.paragraph("", "Children:")
         for child in children:
@@ -180,7 +188,7 @@ def build_object_info(g, info_node):
     uri = info_node["uri"]
     contentnode = nodes.container("")
 
-    parents = list(g[:PROBS.objectComposedOf:uri])
+    parents = list(g[: PROBS.objectComposedOf : uri])
     if parents:
         p = nodes.paragraph("", "Parents:")
         for parent in parents:
@@ -188,7 +196,7 @@ def build_object_info(g, info_node):
             p += _system_id_link(g, parent)
         contentnode += p
 
-    children = list(g[uri:PROBS.objectComposedOf:])
+    children = list(g[uri : PROBS.objectComposedOf :])
     if children:
         p = nodes.paragraph("", "Children:")
         for child in children:
@@ -202,9 +210,12 @@ def build_object_info(g, info_node):
 def _recipe_table(g, objects):
     header_rows = [[nodes.literal("", "Object"), nodes.literal("", "Amount")]]
     table_data = [
-        [_system_id_link(g, obj["object"], nodes.paragraph),
-         nodes.literal("", "%.1f %s" % (obj["amount"], obj["metric"]))
-         if "amount" in obj else ""]
+        [
+            _system_id_link(g, obj["object"], nodes.paragraph),
+            nodes.literal("", "%.1f %s" % (obj["amount"], obj["metric"]))
+            if "amount" in obj
+            else "",
+        ]
         for obj in objects
     ]
     return build_table_from_list(header_rows + table_data, header_rows=1)
@@ -212,8 +223,9 @@ def _recipe_table(g, objects):
 
 def _system_id_link(g, sys_id, within=None):
     """Insert a cross reference to another object/process."""
-    refnode = addnodes.pending_xref('', refdomain="system", refexplicit=False,
-                                    reftype="ref", reftarget=sys_id)
+    refnode = addnodes.pending_xref(
+        "", refdomain="system", refexplicit=False, reftype="ref", reftarget=sys_id
+    )
     label = sys_id.n3(g.namespace_manager)
     refnode += nodes.inline(label, label)
     if within is not None:
@@ -224,9 +236,13 @@ def _system_id_link(g, sys_id, within=None):
 
 
 # Adapted from docutils ListTable directive
-def build_table_from_list(table_data,
-                          # col_widths,
-                          header_rows, stub_columns=0, widths="auto"):
+def build_table_from_list(
+    table_data,
+    # col_widths,
+    header_rows,
+    stub_columns=0,
+    widths="auto",
+):
     """
     :param table_data: list of lists giving table data
     :param header_rows: list of header rows
@@ -241,7 +257,7 @@ def build_table_from_list(table_data,
     #     table['classes'] += ['colwidths-auto']
     # elif widths: # "grid" or list of integers
     #     table['classes'] += ['colwidths-given']
-    table['classes'] += ['colwidths-auto']
+    table["classes"] += ["colwidths-auto"]
 
     tgroup = nodes.tgroup(cols=max_cols)
     table += tgroup
@@ -251,7 +267,7 @@ def build_table_from_list(table_data,
         # if col_width is not None:
         #     colspec.attributes['colwidth'] = col_width
         if stub_columns:
-            colspec.attributes['stub'] = 1
+            colspec.attributes["stub"] = 1
             stub_columns -= 1
         tgroup += colspec
 
