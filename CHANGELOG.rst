@@ -4,6 +4,16 @@ Changelog
 Unreleased
 ----------
 
+BREAKING CHANGES:
+
+- Update to new PRObs ontology URIs: `http://w3id.org/probs-lab/ontology#` and `http://w3id.org/probs-lab/process-recipe#`.
+
+Fixes:
+
+- Use rdflib version >= 6.2, <7.0 : This fixes turtle serialization errors for PNames that contain brackets, see [rdflib changelog](https://github.com/RDFLib/rdflib/blob/main/CHANGELOG.md#2022-07-16-release-620), pull request 1678).
+
+Include function preferredLabel within resolve.py : rdflib versions greater than 6.1.1 no longer have the preferredLabel method in the ConjunctiveGraph class.
+
 v0.4.3 (2023-08-02)
 -------------------
 
