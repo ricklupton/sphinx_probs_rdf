@@ -6,7 +6,7 @@ import yaml
 from docutils import nodes
 from docutils.nodes import Node, Element
 from docutils.parsers.rst import directives  # type: ignore
-from rdflib import Graph, ConjunctiveGraph, URIRef, Literal, BNode, Namespace  # type: ignore
+from rdflib import ConjunctiveGraph, URIRef, Literal, BNode, Namespace  # type: ignore
 from rdflib.namespace import RDF, RDFS  # type: ignore
 from sphinx import addnodes
 from sphinx.addnodes import desc_signature, pending_xref
@@ -17,7 +17,6 @@ from sphinx.directives.code import CodeBlock
 from sphinx.domains import Domain, Index, ObjType
 from sphinx.environment import BuildEnvironment
 from sphinx.roles import XRefRole
-from sphinx.util.docfields import DocFieldTransformer
 from sphinx.util.docutils import SphinxDirective
 from sphinx.util.nodes import make_refnode, find_pending_xref_condition, make_id
 from sphinx.util import logging
@@ -42,15 +41,13 @@ def parse_consumes_or_produces(value):
         items = [_parse_item(x.strip()) for x in value.strip().split("\n")]
     else:
         # A space-separated list of basic names
-        items = [
-            {"object": x.strip()}
-            for x in value.split()
-        ]
+        items = [{"object": x.strip()} for x in value.split()]
 
     return items
 
 
-ITEM_STRING_REGEX = re.compile(r"""
+ITEM_STRING_REGEX = re.compile(
+    r"""
     ^\s*
     ([^= \t]+)               # -> Object type
     \s*
@@ -66,7 +63,9 @@ ITEM_STRING_REGEX = re.compile(r"""
     )?
     ({.+})?                  # Optional YAML section
     $
-""", re.VERBOSE)
+""",
+    re.VERBOSE,
+)
 
 
 def _parse_item(item):
@@ -114,10 +113,7 @@ def expand_consumes_produces_amounts(defs, *items):
     exec(defs, defs_ns)
 
     # Expand amounts in produces/consumes lists using the defs
-    result = [
-        [eval_amount(x, defs_ns) for x in item_list]
-        for item_list in items
-    ]
+    result = [[eval_amount(x, defs_ns) for x in item_list] for item_list in items]
 
     return result
 
@@ -139,14 +135,18 @@ class TTL(CodeBlock):
     def run(self):
         domain = cast(SystemDomain, self.env.get_domain("system"))
         g = domain.get_graph(self.env.docname)
-        preamble = "\n".join('@prefix %s: <%s> .\n' % (prefix, uri)
-                             for prefix, uri in g.namespaces())
+        preamble = "\n".join(
+            "@prefix %s: <%s> .\n" % (prefix, uri) for prefix, uri in g.namespaces()
+        )
         input_data = preamble + "\n" + "\n".join(self.content)
         try:
             g.parse(data=input_data, format="text/turtle")
         except SyntaxError as err:
-            logger.warning("Cannot parse TTL block: %s", err,
-                           location=(self.env.docname, self.lineno))
+            logger.warning(
+                "Cannot parse TTL block: %s",
+                err,
+                location=(self.env.docname, self.lineno),
+            )
 
         # Force language
         self.arguments = ["turtle"]
@@ -193,9 +193,7 @@ class EndSubProcessesDirective(SphinxDirective):
         else:
             paragraph_node = nodes.literal_block(text="Nothing to end!")
 
-        self.env.ref_context["system:process"] = (
-            parents[-1] if parents else None
-        )
+        self.env.ref_context["system:process"] = parents[-1] if parents else None
 
         return [paragraph_node]
 
@@ -214,9 +212,7 @@ class EndSubObjectsDirective(SphinxDirective):
         else:
             paragraph_node = nodes.literal_block(text="Nothing to end!")
 
-        self.env.ref_context["system:object"] = (
-            parents[-1] if parents else None
-        )
+        self.env.ref_context["system:object"] = parents[-1] if parents else None
 
         return [paragraph_node]
 
@@ -227,13 +223,11 @@ QUANTITYKIND = Namespace("http://qudt.org/vocab/quantitykind/")
 
 
 class probs_info(nodes.Element, nodes.General):
-    """Node for PRObs info.
-    """
+    """Node for PRObs info."""
 
 
 class rdf_reference(nodes.reference):
-    """Reference to RDF object.
-    """
+    """Reference to RDF object."""
 
 
 class probs_process_info(probs_info):
@@ -248,13 +242,13 @@ class ObjectEquivalentTo(SphinxDirective):
     required_arguments = 2
     option_spec = {
         "confidence": directives.unchanged,
-        'class': directives.class_option,
+        "class": directives.class_option,
     }
     has_content = True
 
     def run(self):
-        if not self.options.get('class'):
-            self.options['class'] = ['admonition-object-equivalent-to']
+        if not self.options.get("class"):
+            self.options["class"] = ["admonition-object-equivalent-to"]
 
         # self.assert_has_content()
         uri1 = parse_uri(self.config, self.arguments[0])
@@ -280,7 +274,6 @@ class ObjectEquivalentTo(SphinxDirective):
         g.add((uri1, PROBS.objectEquivalentTo, uri2))
 
         return [self.indexnode, node]
-
 
 
 class SystemObjectDescription(ObjectDescription):
@@ -350,10 +343,10 @@ class Process(SystemObjectDescription):
     signature_prefix = "Process: "
 
     def get_nesting_depth(self):
-        return len(self.env.ref_context.get('system:processes', []))
+        return len(self.env.ref_context.get("system:processes", []))
 
     def add_target_and_index(self, uri, sig, signode):
-        node_id = make_id(self.env, self.state.document, '', uri)
+        node_id = make_id(self.env, self.state.document, "", uri)
         signode["ids"].append(node_id)
         domain = cast(SystemDomain, self.env.get_domain("system"))
         # XXX maybe label should come from RDF later
@@ -363,8 +356,14 @@ class Process(SystemObjectDescription):
         # XXX avoid parse_uri too many times?
         domain.note_process_recipe(
             uri,
-            [parse_uri(self.config, obj["object"]) for obj in self.options.get("consumes", [])],
-            [parse_uri(self.config, obj["object"]) for obj in self.options.get("produces", [])],
+            [
+                parse_uri(self.config, obj["object"])
+                for obj in self.options.get("consumes", [])
+            ],
+            [
+                parse_uri(self.config, obj["object"])
+                for obj in self.options.get("produces", [])
+            ],
         )
 
     def before_content(self):
@@ -386,9 +385,7 @@ class Process(SystemObjectDescription):
         parents = self.env.ref_context.setdefault("system:processes", [])
         if parents and "become_parent" not in self.options:
             parents.pop()
-        self.env.ref_context["system:process"] = (
-            parents[-1] if parents else None
-        )
+        self.env.ref_context["system:process"] = parents[-1] if parents else None
 
     def define_graph(self, g, uri, sig: str):
         label = self.options.get("label", sig)
@@ -419,11 +416,16 @@ class Process(SystemObjectDescription):
         # First expand any expressions
         defs = self.options.get("defs", "")
         consumes, produces = expand_consumes_produces_amounts(
-            defs, self.options.get("consumes", []), self.options.get("produces", []))
+            defs, self.options.get("consumes", []), self.options.get("produces", [])
+        )
 
         recipe_consumes, recipe_produces = [], []
-        _process_inputs_outputs(g, self.config, uri, "consumes", consumes, recipe_consumes)
-        _process_inputs_outputs(g, self.config, uri, "produces", produces, recipe_produces)
+        _process_inputs_outputs(
+            g, self.config, uri, "consumes", consumes, recipe_consumes
+        )
+        _process_inputs_outputs(
+            g, self.config, uri, "produces", produces, recipe_produces
+        )
         if recipe_consumes or recipe_produces:
             recipe = BNode()
             g.add((uri, PROBS_RECIPE.hasRecipe, recipe))
@@ -444,8 +446,13 @@ def _process_inputs_outputs(g, config, uri, relation, objects, recipe_items):
 
             # XXX only support a few units for now, this could be more general.
             if "unit" in obj and obj["unit"] not in units:
-                logger.error("Unsupported unit %r for object %r in recipe for %r -- treating as 'kg'",
-                             obj["unit"], obj["object"], str(uri))
+                logger.error(
+                    "Unsupported unit %r for object %r in recipe for %r"
+                    " -- treating as 'kg'",
+                    obj["unit"],
+                    obj["object"],
+                    str(uri),
+                )
                 scale, metric = units["kg"]
             else:
                 scale, metric = units[obj["unit"]]
@@ -464,8 +471,7 @@ def parse_traded(value):
     value = value.lower()
     imp = value.startswith("import")
     exp = value.startswith("export")
-    if (value in ("both", "yes", "true") or
-        "import" in value and "export" in value):
+    if value in ("both", "yes", "true") or "import" in value and "export" in value:
         imp = exp = True
     return (imp, exp)
 
@@ -516,7 +522,7 @@ class Object(SystemObjectDescription):
         return len(self.env.ref_context.get("system:objects", []))
 
     def add_target_and_index(self, uri, sig, signode):
-        node_id = make_id(self.env, self.state.document, '', uri)
+        node_id = make_id(self.env, self.state.document, "", uri)
         signode["ids"].append(node_id)
         domain = cast(SystemDomain, self.env.get_domain("system"))
         # XXX maybe label should come from RDF later
@@ -543,9 +549,7 @@ class Object(SystemObjectDescription):
         parents = self.env.ref_context.setdefault("system:objects", [])
         if parents and "become_parent" not in self.options:
             parents.pop()
-        self.env.ref_context["system:object"] = (
-            parents[-1] if parents else None
-        )
+        self.env.ref_context["system:object"] = parents[-1] if parents else None
 
     def define_graph(self, g, uri, sig: str):
         label = self.options.get("label", sig)
@@ -575,8 +579,10 @@ class Object(SystemObjectDescription):
         if "traded" in self.options:
             imp, exp = self.options["traded"]
             if imp != exp:
-                logger.error("Currently objects must be either fully traded"
-                             "(imports and exports) or not at all")
+                logger.error(
+                    "Currently objects must be either fully traded"
+                    "(imports and exports) or not at all"
+                )
             g.add((uri, PROBS.objectIsTraded, Literal(imp or exp)))
 
         if "equivalent" in self.options:
@@ -626,10 +632,6 @@ class ObjectIndex(Index):
             for uri, thing in self.domain.things.items()
             if thing.thing_type == "process"
         }
-        # processes = {
-        #     name: (dispname, typ, docname, anchor)
-        #     for name, dispname, typ, docname, anchor, _ in self.domain.data["processes"]
-        # }
         process_recipe = self.domain.process_recipe
         object_processes = defaultdict(list)
 
@@ -667,12 +669,24 @@ class ObjectIndex(Index):
         for obj_uri, process_uris in object_processes.items():
             obj = objects[obj_uri]
             k = obj.label.upper()[0]
-            content[k].append((obj.label, 1, obj.docname, obj.node_id, obj.docname, "", obj.thing_type))
+            content[k].append(
+                (
+                    obj.label,
+                    1,
+                    obj.docname,
+                    obj.node_id,
+                    obj.docname,
+                    "",
+                    obj.thing_type,
+                )
+            )
 
             for process_uri, direction in process_uris:
                 if process_uri in processes:
                     p = processes[process_uri]
-                    content[k].append((p.label, 2, p.docname, p.node_id, direction, "", p.thing_type))
+                    content[k].append(
+                        (p.label, 2, p.docname, p.node_id, direction, "", p.thing_type)
+                    )
                 else:
                     logger.debug("Missing process in domain: %s", process_uri)
 
@@ -706,7 +720,15 @@ class ProcessIndex(Index):
         for process_uri, thing in processes.items():
             k = thing.label.upper()[0]
             content[k].append(
-                (thing.label, 0, thing.docname, thing.node_id, thing.docname, "", thing.thing_type)
+                (
+                    thing.label,
+                    0,
+                    thing.docname,
+                    thing.node_id,
+                    thing.docname,
+                    "",
+                    thing.thing_type,
+                )
             )
 
         # convert the dict to the sorted list of tuples expected
@@ -730,12 +752,10 @@ class SystemDomain(Domain):
     # These are the different types of things that we can keep track of, and
     # which roles can cross-reference to them.
     object_types = {
-        'process': ObjType(_('process'), 'ref'),
-        'object':  ObjType(_('object'),  'ref'),
+        "process": ObjType(_("process"), "ref"),
+        "object": ObjType(_("object"), "ref"),
     }
-    roles = {
-        "ref": XRefRole()
-    }
+    roles = {"ref": XRefRole()}
     directives = {
         "process": Process,
         "object": Object,
@@ -748,11 +768,11 @@ class SystemDomain(Domain):
         "graph": None,
     }
 
-    ### Keeping track of where things are defined
+    # Keeping track of where things are defined
 
     @property
     def things(self) -> Dict[str, ThingEntry]:
-        return self.data.setdefault('things', {})  # uri -> ThingEntry
+        return self.data.setdefault("things", {})  # uri -> ThingEntry
 
     @property
     def graph(self) -> ConjunctiveGraph:
@@ -768,26 +788,33 @@ class SystemDomain(Domain):
 
     @property
     def process_recipe(self) -> Dict[str, list]:
-        return self.data.setdefault('process_recipe', {})  # uri -> list
+        return self.data.setdefault("process_recipe", {})  # uri -> list
 
     def get_graph(self, graph_id):
         return self.graph.get_context(graph_id)
 
-    def note_thing(self, uri: str, thing_type: str, label: str, node_id: str, location: Any = None):
+    def note_thing(
+        self, uri: str, thing_type: str, label: str, node_id: str, location: Any = None
+    ):
         """Note the definition of a thing (what Sphinx calls an "object")."""
         if uri in self.things:
             # duplicated
             other = self.things[uri]
-            logger.warning(__('duplicate description of %s, '
-                              'other instance in %s, use :noindex: for one of them'),
-                           uri, other.docname, location=location)
+            logger.warning(
+                __(
+                    "duplicate description of %s, "
+                    "other instance in %s, use :noindex: for one of them"
+                ),
+                uri,
+                other.docname,
+                location=location,
+            )
         self.things[uri] = ThingEntry(self.env.docname, node_id, thing_type, label)
 
     def note_process_recipe(self, uri: str, consumes: list, produces: list):
-        self.process_recipe[uri] = (
-            [(k, "consumes") for k in consumes] +
-            [(k, "produces") for k in produces]
-        )
+        self.process_recipe[uri] = [(k, "consumes") for k in consumes] + [
+            (k, "produces") for k in produces
+        ]
 
     def clear_doc(self, docname: str) -> None:
         for uri, thing in list(self.things.items()):
@@ -799,7 +826,7 @@ class SystemDomain(Domain):
 
     def merge_domaindata(self, docnames: List[str], otherdata: Dict) -> None:
         # XXX check duplicates?
-        for uri, thing in otherdata['things'].items():
+        for uri, thing in otherdata["things"].items():
             if thing.docname in docnames:
                 self.things[uri] = thing
         if "graph" in otherdata:
@@ -848,20 +875,27 @@ class SystemDomain(Domain):
         if not matches:
             return None
         elif len(matches) > 1:
-            logger.warning(__('more than one target found for cross-reference %r: %s'),
-                           target, ', '.join(match[0] for match in matches),
-                           type='ref', subtype='system', location=node)
+            logger.warning(
+                __("more than one target found for cross-reference %r: %s"),
+                target,
+                ", ".join(match[0] for match in matches),
+                type="ref",
+                subtype="system",
+                location=node,
+            )
         uri, thing = matches[0]
 
         # determine the content of the reference by conditions
-        content = find_pending_xref_condition(node, 'resolved')
+        content = find_pending_xref_condition(node, "resolved")
         if content:
             children = content.children
         else:
             # if not found, use contnode
             children = [contnode]
 
-        return make_refnode(builder, fromdocname, thing.docname, thing.node_id, children, uri)
+        return make_refnode(
+            builder, fromdocname, thing.docname, thing.node_id, children, uri
+        )
 
     # TODO: implement `resolve_any_xref`?
 
