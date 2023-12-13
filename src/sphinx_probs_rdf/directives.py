@@ -293,7 +293,7 @@ class SystemObjectDescription(ObjectDescription):
 
         # Replace `desc` with `admonition`
         new_node = nodes.admonition("", *node.children)
-        new_node["classes"] = node["classes"] + ["toggle", nest_depth]
+        new_node["classes"] = node["classes"] + ["toggle", nest_depth]  # type: ignore
 
         # Replace desc_content with paragraph and desc_signature with title
         for sig in new_node.findall(addnodes.desc_signature):
@@ -325,7 +325,8 @@ class SystemObjectDescription(ObjectDescription):
                 self.options["label"], " / " + self.options["label"]
             )
 
-        g = self.env.get_domain("system").get_graph(self.env.docname)
+        domain = cast(SystemDomain, self.env.get_domain("system"))
+        g = domain.get_graph(self.env.docname)
         self.define_graph(g, uri, sig)
 
         return uri
@@ -419,7 +420,8 @@ class Process(SystemObjectDescription):
             defs, self.options.get("consumes", []), self.options.get("produces", [])
         )
 
-        recipe_consumes, recipe_produces = [], []
+        recipe_consumes: List[BNode] = []
+        recipe_produces: List[BNode] = []
         _process_inputs_outputs(
             g, self.config, uri, "consumes", consumes, recipe_consumes
         )
@@ -786,6 +788,10 @@ class SystemDomain(Domain):
                 g.bind(prefix, uri)
         return self.data["graph"]
 
+    @graph.setter
+    def graph(self, graph: ConjunctiveGraph):
+        self.data["graph"] = graph
+
     @property
     def process_recipe(self) -> Dict[str, list]:
         return self.data.setdefault("process_recipe", {})  # uri -> list
@@ -849,7 +855,7 @@ class SystemDomain(Domain):
         if thing_type is None:
             thing_types = list(self.object_types)
         else:
-            thing_types = self.objtypes_for_role(thing_type)
+            thing_types = self.objtypes_for_role(thing_type) or []
 
         matches = [
             (uri, thing)
