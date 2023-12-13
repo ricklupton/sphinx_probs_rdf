@@ -1,5 +1,4 @@
 from typing import cast
-from warnings import warn
 from docutils import nodes
 from sphinx.transforms.post_transforms import SphinxPostTransform
 from sphinx import addnodes
@@ -92,39 +91,8 @@ def build_rdf_reference(g, node):
         Return a list of (labelProp, label) pairs, where labelProp is either
         skos:prefLabel or rdfs:label.
 
-        >>> from rdflib import ConjunctiveGraph, URIRef, Literal, namespace
-        >>> from pprint import pprint
-        >>> g = ConjunctiveGraph()
-        >>> u = URIRef("http://example.com/foo")
-        >>> g.add([u, namespace.RDFS.label, Literal("foo")])
-        >>> g.add([u, namespace.RDFS.label, Literal("bar")])
-        >>> pprint(sorted(g.preferredLabel(u)))
-        [(rdflib.term.URIRef('http://www.w3.org/2000/01/rdf-schema#label'),
-          rdflib.term.Literal('bar')),
-         (rdflib.term.URIRef('http://www.w3.org/2000/01/rdf-schema#label'),
-          rdflib.term.Literal('foo'))]
-        >>> g.add([u, namespace.SKOS.prefLabel, Literal("bla")])
-        >>> pprint(g.preferredLabel(u))
-        [(rdflib.term.URIRef('http://www.w3.org/2004/02/skos/core#prefLabel'),
-          rdflib.term.Literal('bla'))]
-        >>> g.add([u, namespace.SKOS.prefLabel, Literal("blubb", lang="en")])
-        >>> sorted(g.preferredLabel(u)) #doctest: +NORMALIZE_WHITESPACE
-        [(rdflib.term.URIRef('http://www.w3.org/2004/02/skos/core#prefLabel'),
-          rdflib.term.Literal('bla')),
-          (rdflib.term.URIRef('http://www.w3.org/2004/02/skos/core#prefLabel'),
-          rdflib.term.Literal('blubb', lang='en'))]
-        >>> g.preferredLabel(u, lang="") #doctest: +NORMALIZE_WHITESPACE
-        [(rdflib.term.URIRef('http://www.w3.org/2004/02/skos/core#prefLabel'),
-          rdflib.term.Literal('bla'))]
-        >>> pprint(g.preferredLabel(u, lang="en"))
-        [(rdflib.term.URIRef('http://www.w3.org/2004/02/skos/core#prefLabel'),
-          rdflib.term.Literal('blubb', lang='en'))]
         """
-        warn(
-            DeprecationWarning(
-                "graph.preferredLabel() is deprecated and will be removed in rdflib 6.0.0."
-            )
-        )
+
         if default is None:
             default = []
 
