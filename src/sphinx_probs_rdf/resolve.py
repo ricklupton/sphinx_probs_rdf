@@ -16,13 +16,14 @@ class ProbsTransform(SphinxPostTransform):
     def run(self, **kwargs):
         domain = cast(SystemDomain, self.env.get_domain("system"))
         g = domain.graph
+        unit_info = self.config.probs_rdf_units
 
         for node in self.document.findall(rdf_reference):
             ref = build_rdf_reference(g, node)
             node.replace_self([ref])
 
         for node in self.document.findall(probs_process_info):
-            info = build_process_info(g, node)
+            info = build_process_info(g, unit_info, node)
             node.replace_self(info)
 
         for node in self.document.findall(probs_object_info):
@@ -127,7 +128,7 @@ def build_rdf_reference(g, node):
     return result
 
 
-def build_process_info(g, info_node):
+def build_process_info(g, unit_info, info_node):
     uri = info_node["uri"]
     contentnode = nodes.container("")
 
@@ -149,10 +150,16 @@ def build_process_info(g, info_node):
             }
             for item in g[recipe:PROBS_RECIPE.produces:]
         ]
-        contentnode += nodes.paragraph("Consumes: ", "Consumes: ")
-        contentnode += _recipe_table(g, consumes_data)
-        contentnode += nodes.paragraph("Produces: ", "Produces: ")
-        contentnode += _recipe_table(g, produces_data)
+        if consumes_data:
+            contentnode += nodes.paragraph("Consumes: ", "Consumes: ")
+            contentnode += _recipe_table(g, unit_info, consumes_data)
+        else:
+            contentnode += nodes.paragraph("No inputs.", "No inputs.")
+        if produces_data:
+            contentnode += nodes.paragraph("Produces: ", "Produces: ")
+            contentnode += _recipe_table(g, unit_info, produces_data)
+        else:
+            contentnode += nodes.paragraph("No outputs.", "No outputs.")
     else:
         # XXX TODO: show consumes and produces without recipe
         pass
@@ -199,12 +206,19 @@ def build_object_info(g, info_node):
     return contentnode
 
 
-def _recipe_table(g, objects):
+def _recipe_table(g, unit_info, objects):
     header_rows = [[nodes.literal("", "Object"), nodes.literal("", "Amount")]]
+
+    metric_unit_info = {}
+    for unit, (scale, metric) in unit_info.items():
+        if metric in metric_unit_info:
+            print("Warning: ignoring duplicate unit %s" % metric)
+        else:
+            metric_unit_info[metric] = (scale, unit)
+
     table_data = [
         [_system_id_link(g, obj["object"], nodes.paragraph),
-         nodes.literal("", "%.1f %s" % (obj["amount"], obj["metric"]))
-         if "amount" in obj else ""]
+         _format_quantity(g, metric_unit_info, obj)]
         for obj in objects
     ]
     return build_table_from_list(header_rows + table_data, header_rows=1)
@@ -222,6 +236,14 @@ def _system_id_link(g, sys_id, within=None):
         return wrapper
     return refnode
 
+
+def _format_quantity(g, metric_unit_info, obj):
+    if "amount" in obj:
+        scale, unit = metric_unit_info.get(obj["metric"], (1, ""))
+        amount = obj["amount"] / scale
+        fmt = "%.2f" if amount > 0.02 else "%.2g"
+        return nodes.literal("", (fmt + " %s") % (amount, unit))
+    return ""
 
 # Adapted from docutils ListTable directive
 def build_table_from_list(table_data,

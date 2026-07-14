@@ -355,6 +355,7 @@ class Process(SystemObjectDescription):
     def add_target_and_index(self, uri, sig, signode):
         node_id = make_id(self.env, self.state.document, '', uri)
         signode["ids"].append(node_id)
+        self.indexnode["entries"].append(("single", node_id, node_id, "", None))
         domain = cast(SystemDomain, self.env.get_domain("system"))
         # XXX maybe label should come from RDF later
         domain.note_thing(
