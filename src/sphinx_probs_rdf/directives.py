@@ -24,6 +24,26 @@ from sphinx.util import logging
 logger = logging.getLogger(__name__)
 
 
+def parse_yaml_value(value):
+    """Parse an option's raw text as arbitrary YAML (e.g. ``:range: [0.449, 0.495]``)."""
+    if value is None:
+        return None
+    try:
+        return yaml.safe_load(value)
+    except yaml.YAMLError as err:
+        raise ValueError(f"invalid YAML: {err}") from err
+
+
+def parse_yaml_mapping(value):
+    """Parse an option's raw text as a YAML mapping (e.g. ``:factors:``)."""
+    data = parse_yaml_value(value)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("expected a YAML mapping")
+    return data
+
+
 def parse_composed_of(value):
     """Parse composed_of option."""
     if value is None:
@@ -276,6 +296,47 @@ class ObjectEquivalentTo(SphinxDirective):
         return [self.indexnode, node]
 
 
+class Parameter(SphinxDirective):
+    """``system:parameter`` -- a named scalar.
+    """
+
+    required_arguments = 1
+    option_spec = {
+        "label": directives.unchanged,
+        "value": directives.unchanged,
+        "range": parse_yaml_value,
+        "source": directives.unchanged,
+    }
+    has_content = True
+
+    def run(self):
+        name = self.arguments[0]
+        label = self.options.get("label", name)
+
+        node = nodes.admonition()
+        node["classes"].append("admonition-parameter")
+
+        title = nodes.title("", "")
+        title += nodes.strong(f"Parameter: {name}", f"Parameter: {name}")
+
+        summary = nodes.paragraph()
+        summary += nodes.Text(label)
+        if "value" in self.options:
+            summary += nodes.Text(f" = {self.options['value']}")
+        if "range" in self.options:
+            summary += nodes.Text(f" (range: {self.options['range']})")
+        if "source" in self.options:
+            summary += nodes.Text(f" [{self.options['source']}]")
+
+        node += [title, summary]
+        if self.content:
+            content_node = nodes.paragraph()
+            self.state.nested_parse(self.content, self.content_offset, content_node)
+            node += content_node
+
+        return [node]
+
+
 class SystemObjectDescription(ObjectDescription):
     has_content = True
     required_arguments = 1
@@ -340,6 +401,10 @@ class Process(SystemObjectDescription):
         "produces": parse_consumes_or_produces,
         "composed_of": parse_composed_of,
         "defs": directives.unchanged,
+        "per": parse_yaml_mapping,
+        "balance": parse_yaml_value,
+        "consumes_concentration": parse_yaml_value,
+        "produces_concentration": parse_yaml_value,
     }
     signature_prefix = "Process: "
 
@@ -446,8 +511,18 @@ def _process_inputs_outputs(g, config, uri, relation, objects, recipe_items):
         if "amount" in obj:
             # Have a recipe
 
+            # A `%`/`%layer` unit marks a share, not a physical amount in any of
+            # `units`' metrics -- there is no QUDT quantity kind for "fraction of
+            # this recipe side", so it is recorded as Dimensionless at scale 1 (the
+            # raw percentage number), same as the `-` unit. This is only ever read
+            # back by the golden-file comparison (`code/compare_parsed_to_rdf.py`);
+            # the solve pipeline reads recipe amounts from `system_definitions.
+            # load_system()` directly, not RDF.
+            unit = obj.get("unit")
+            if unit is not None and unit.startswith("%"):
+                scale, metric = 1, QUANTITYKIND.Dimensionless
             # XXX only support a few units for now, this could be more general.
-            if "unit" in obj and obj["unit"] not in units:
+            elif "unit" in obj and obj["unit"] not in units:
                 logger.error(
                     "Unsupported unit %r for object %r in recipe for %r"
                     " -- treating as 'kg'",
@@ -517,6 +592,8 @@ class Object(SystemObjectDescription):
         "composed_of": parse_composed_of,
         "traded": parse_traded,
         "equivalent": parse_equivalent,
+        "basis": directives.unchanged,
+        "factors": parse_yaml_mapping,
     }
     signature_prefix = "Object: "
 
@@ -762,6 +839,7 @@ class SystemDomain(Domain):
         "process": Process,
         "object": Object,
         "object-equivalent-to": ObjectEquivalentTo,
+        "parameter": Parameter,
     }
     indices = [ProcessIndex, ObjectIndex]
     initial_data: dict = {
