@@ -91,6 +91,38 @@ def test_probs_rdf_builder_mixed_units(app, status, warning):
         }
 
 
+BASIS = Namespace("http://example.org/basis/")
+
+
+@pytest.mark.sphinx(
+    'probs_rdf', testroot='myst',
+    confoverrides={
+        'probs_rdf_system_prefix': str(SYS),
+        'probs_rdf_basis_prefix': str(BASIS),
+        # Bare values -- no need to prefix them, once probs_rdf_basis_prefix is set
+        # (see merge_default_config); 'kg'/'-' left unset here to also check they
+        # still fall back to DEFAULT_UNIT_METRICS (QUDT) untouched.
+        'probs_rdf_units': {'kg': 'mass'},
+    })
+def test_probs_rdf_units_bare_value_uses_basis_prefix(app, status, warning):
+    """A bare probs_rdf_units metric value resolves against probs_rdf_basis_prefix,
+    not QUDT quantitykind, once a project sets one -- matching :basis:'s own
+    resolution (test_object_basis.py), so a project can use one shared plain-name
+    vocabulary across both the standalone loader and the RDF/Sphinx build."""
+    app.builder.build_all()
+    assert warning.getvalue().strip() == ""
+
+    g = Graph()
+    g.parse(app.outdir / 'output.ttl', format='ttl')
+
+    recipe = g.value(SYS.P1, PROBS_RECIPE.hasRecipe)
+    consumes = get_recipe_items(g, recipe, PROBS_RECIPE.consumes)
+    assert consumes == {
+        (SYS.Apples, BASIS.mass, 0.7),
+        (SYS.Blackberries, BASIS.mass, 0.3),
+    }
+
+
 @pytest.mark.xfail(reason="need to fix display of units in recipes")
 @pytest.mark.sphinx(
     'html', testroot='myst',

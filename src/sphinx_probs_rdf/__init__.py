@@ -18,6 +18,13 @@ from .directives import (
 )
 from .resolve import ProbsTransform
 
+try:
+    # Only available with the `loader` extra (myst-parser, markdown-it-py); a plain
+    # `sphinx_probs_rdf` install (used only as a Sphinx extension) does not need it.
+    from .loader import parse_system_definitions, parse_markdown  # noqa: F401
+except ImportError:
+    pass
+
 
 # Old version
 NB_RENDER_PRIORITY = {
@@ -87,6 +94,19 @@ def parse_uri(config, value, default_ns):
 
 
 def merge_default_config(app: Sphinx, config: Config):
+    # A bare (no-prefix) probs_rdf_units value defaults into probs_rdf_basis_prefix
+    # when a project has set one, rather than QUDT quantitykind -- so a project using
+    # its own basis/layer vocabulary (see the :basis:/objectMetric handling in
+    # directives.py) can write e.g. `probs_rdf_units: {kg: mass}` and get the same
+    # vocabulary on both predicates, without prefixing every value by hand. Only
+    # affects units this project actually lists in probs_rdf_units; the
+    # DEFAULT_UNIT_METRICS fallback below (for units it doesn't) is untouched, since
+    # that is a generic default for projects that haven't configured anything.
+    default_metric_ns = (
+        Namespace(config.probs_rdf_basis_prefix)
+        if config.probs_rdf_basis_prefix
+        else QUANTITYKIND
+    )
     d = config.probs_rdf_units
     for unit, value in d.items():
         if isinstance(value, str):
@@ -94,7 +114,7 @@ def merge_default_config(app: Sphinx, config: Config):
             metric = value
         else:
             scale, metric = value
-        metric = parse_uri(config, metric, QUANTITYKIND)
+        metric = parse_uri(config, metric, default_metric_ns)
         d[unit] = (scale, metric)
     for unit, (scale, metric) in DEFAULT_UNIT_METRICS.items():
         if unit not in d:
@@ -153,6 +173,11 @@ def setup(app: Sphinx) -> Dict[str, Any]:
 
     # Since the graph is built when parsing, any change should trigger a rebuild
     app.add_config_value("probs_rdf_system_prefix", "", "env", [str])
+    # Default namespace for a bare (no-prefix) :basis: value's objectMetric (see
+    # directives.py's Object.define_graph), and for a bare probs_rdf_units metric
+    # value (see merge_default_config above) -- unset ("") preserves the pre-existing
+    # defaults (probs_rdf_system_prefix, QUDT quantitykind respectively).
+    app.add_config_value("probs_rdf_basis_prefix", "", "env", [str])
     app.add_config_value("probs_rdf_extra_prefixes", {}, "env", [dict])
     app.add_config_value("probs_rdf_units", {}, "env", [dict])
     app.add_config_value("probs_rdf_paths", [], "env", [list])

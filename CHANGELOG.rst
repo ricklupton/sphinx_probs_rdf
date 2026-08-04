@@ -5,7 +5,23 @@ Changelog
 Unreleased
 ----------
 
-[insert changelog here]
+New features to support forthcoming modelling tools based on the system definitions parsed here:
+
+- New ``system:parameter`` directive: a named scalar that can be referenced by name from an object's ``:factors:`` or a recipe item, so uncertainty in the parameter is shared between them.
+
+- New ``system:process`` options ``:per:``, ``:balance:`` and new ``system:object`` options ``:basis:``, ``:factors:``. The only option that appears in the RDF output is ``:basis:``, which emits ``probs:objectMetric`` statements.
+
+- New ``probs_rdf_basis_prefix`` config value: the default namespace for ``:basis:`` values and the ``probs_rdf_units`` config values, instead of the system namespace / QUDT quantitykind respectively.
+
+- Recipe items may use a ``%``/``%layer`` unit.
+
+- New ``:extra:`` option on ``system:process``/``system:object``, allowing arbitrary YAML mapping data.
+
+- New standalone loader (``sphinx_probs_rdf.load_system`` / ``sphinx_probs_rdf.parse_markdown``): parses ``system:process``/``system:object``/``system:parameter`` directives directly into a plain-Python ``ParsedSystem``.
+
+Internal:
+
+- The directive option grammar (parsers and option specs) moved to a new ``grammar.py``, and unit handling to a new ``units.py``, so the Sphinx extension and the standalone loader share one implementation.
 
 
 v0.5.0 (2023-12-13)

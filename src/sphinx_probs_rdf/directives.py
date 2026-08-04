@@ -1,7 +1,5 @@
 from collections import defaultdict
 from typing import Any, List, Dict, Iterator, Tuple, Optional, NamedTuple, cast
-import re
-import yaml
 
 from docutils import nodes
 from docutils.nodes import Node, Element
@@ -21,132 +19,21 @@ from sphinx.util.docutils import SphinxDirective
 from sphinx.util.nodes import make_refnode, find_pending_xref_condition, make_id
 from sphinx.util import logging
 
-logger = logging.getLogger(__name__)
-
-
-def parse_yaml_value(value):
-    """Parse an option's raw text as arbitrary YAML (e.g. ``:range: [0.449, 0.495]``)."""
-    if value is None:
-        return None
-    try:
-        return yaml.safe_load(value)
-    except yaml.YAMLError as err:
-        raise ValueError(f"invalid YAML: {err}") from err
-
-
-def parse_yaml_mapping(value):
-    """Parse an option's raw text as a YAML mapping (e.g. ``:factors:``)."""
-    data = parse_yaml_value(value)
-    if data is None:
-        return {}
-    if not isinstance(data, dict):
-        raise ValueError("expected a YAML mapping")
-    return data
-
-
-def parse_composed_of(value):
-    """Parse composed_of option."""
-    if value is None:
-        return []
-    return [x.strip() for x in value.split()]
-
-
-def parse_consumes_or_produces(value):
-    """Parse consumes and products options."""
-    if value is None:
-        return []
-
-    if "\n" in value or value.strip().startswith("{"):
-        # Complex definitions, one per line -- or a single YAML-style definition
-        items = [_parse_item(x.strip()) for x in value.strip().split("\n")]
-    else:
-        # A space-separated list of basic names
-        items = [{"object": x.strip()} for x in value.split()]
-
-    return items
-
-
-ITEM_STRING_REGEX = re.compile(
-    r"""
-    ^\s*
-    ([^= \t]+)               # -> Object type
-    \s*
-    (?:                      # Optional amount section
-        =
-        \s*
-        ([0-9.eE-]+)         # -> Amount
-        (?:                  # Optional unit section
-            \s*
-            ([^{]+?)         # -> Unit
-            \s*
-        )?
-    )?
-    ({.+})?                  # Optional YAML section
-    $
-""",
-    re.VERBOSE,
+from . import grammar
+from .grammar import (  # noqa: F401 -- re-exported for backwards compatibility
+    parse_yaml_value,
+    parse_yaml_mapping,
+    parse_composed_of,
+    parse_consumes_or_produces,
+    ITEM_STRING_REGEX,
+    _parse_item,
+    expand_consumes_produces_amounts,
+    eval_amount,
+    parse_traded,
+    parse_equivalent,
 )
 
-
-def _parse_item(item):
-    if isinstance(item, str):
-        match = ITEM_STRING_REGEX.match(item)
-        if match:
-            extra = {}
-            if match.group(4):
-                try:
-                    extra = yaml.safe_load(match.group(4))
-                except yaml.YAMLError:
-                    pass
-            return {
-                "object": match.group(1),
-                "amount": float(match.group(2)) if match.group(2) else None,
-                "unit": match.group(3),
-                **extra,
-            }
-        else:
-            # Try parsing whole thing as yaml dict
-            try:
-                d = yaml.safe_load(item)
-                if not isinstance(d, dict):
-                    raise ValueError("YAML data should be dictionary")
-                return d
-            except yaml.YAMLError:
-                pass
-
-            return item
-    elif isinstance(item, list):
-        return {
-            "object": item[0],
-            "amount": item[1],
-            "unit": item[2],
-        }
-    elif isinstance(item, dict):
-        return item
-    else:
-        raise ValueError("cannot parse item: %r" % item)
-
-
-def expand_consumes_produces_amounts(defs, *items):
-    """Expand Python expressions in cleaned-up options."""
-    defs_ns = {}
-    exec(defs, defs_ns)
-
-    # Expand amounts in produces/consumes lists using the defs
-    result = [[eval_amount(x, defs_ns) for x in item_list] for item_list in items]
-
-    return result
-
-
-def eval_amount(item, namespace):
-    """Evaluate expressions within the "amount" field of the item.
-
-    WARNING: not safe for use with untrusted input!
-    """
-    if isinstance(item, dict) and isinstance(item.get("amount"), str):
-        amount = eval(item["amount"], {}, dict(namespace))
-        return {**item, "amount": amount}
-    return item
+logger = logging.getLogger(__name__)
 
 
 class TTL(CodeBlock):
@@ -301,12 +188,7 @@ class Parameter(SphinxDirective):
     """
 
     required_arguments = 1
-    option_spec = {
-        "label": directives.unchanged,
-        "value": directives.unchanged,
-        "range": parse_yaml_value,
-        "source": directives.unchanged,
-    }
+    option_spec = dict(grammar.CORE_PARAMETER_OPTIONS)
     has_content = True
 
     def run(self):
@@ -394,18 +276,7 @@ class SystemObjectDescription(ObjectDescription):
 
 
 class Process(SystemObjectDescription):
-    option_spec = {
-        "label": directives.unchanged_required,
-        "become_parent": directives.flag,
-        "consumes": parse_consumes_or_produces,
-        "produces": parse_consumes_or_produces,
-        "composed_of": parse_composed_of,
-        "defs": directives.unchanged,
-        "per": parse_yaml_mapping,
-        "balance": parse_yaml_value,
-        "consumes_concentration": parse_yaml_value,
-        "produces_concentration": parse_yaml_value,
-    }
+    option_spec = grammar.PROCESS_OPTION_SPEC
     signature_prefix = "Process: "
 
     def get_nesting_depth(self):
@@ -541,31 +412,14 @@ def _process_inputs_outputs(g, config, uri, relation, objects, recipe_items):
             recipe_items.append(item)
 
 
-def parse_traded(value):
-    """Check the value of the :traded: option is valid."""
-    if value is None:
-        return (False, False)
-    value = value.lower()
-    imp = value.startswith("import")
-    exp = value.startswith("export")
-    if value in ("both", "yes", "true") or "import" in value and "export" in value:
-        imp = exp = True
-    return (imp, exp)
-
-
-def parse_equivalent(value):
-    """Convert list of uris."""
-    if value is None:
-        value = ""
-    items = [x.strip() for x in value.split()]
-    return items
-
-
-def parse_uri(config, item, default=None):
+def parse_uri(config, item, default=None, default_ns=None):
     """Convert a string to a URIRef.
 
-    A blank prefix or bare id refers to the namespace given by the
-    `probs_rdf_system_prefix` config variable.
+    A blank prefix or bare id refers to `default_ns` if given, else the namespace
+    given by the `probs_rdf_system_prefix` config variable -- object/process names
+    themselves always want the latter (the default), but :basis:'s objectMetric
+    passes its own `default_ns` (`probs_rdf_basis_prefix`) so a bare basis name
+    doesn't land in the same namespace as real objects/processes.
 
     A missing suffix means the same as the object currently being defined.
 
@@ -574,7 +428,10 @@ def parse_uri(config, item, default=None):
         return URIRef(item[1:-1])
     prefix, _, item_id = item.rpartition(":")
     if not prefix:
-        ns = Namespace(config.probs_rdf_system_prefix)
+        ns = (
+            default_ns if default_ns is not None
+            else Namespace(config.probs_rdf_system_prefix)
+        )
     else:
         ns = Namespace(config.probs_rdf_extra_prefixes[prefix])
     if not item_id:
@@ -585,16 +442,7 @@ def parse_uri(config, item, default=None):
 class Object(SystemObjectDescription):
     has_content = True
     required_arguments = 1
-    option_spec = {
-        "label": directives.unchanged,
-        "become_parent": directives.flag,
-        "parent_object": directives.unchanged,
-        "composed_of": parse_composed_of,
-        "traded": parse_traded,
-        "equivalent": parse_equivalent,
-        "basis": directives.unchanged,
-        "factors": parse_yaml_mapping,
-    }
+    option_spec = grammar.OBJECT_OPTION_SPEC
     signature_prefix = "Object: "
 
     def get_nesting_depth(self):
@@ -637,6 +485,19 @@ class Object(SystemObjectDescription):
         g.add((uri, RDF.type, PROBS.ReferenceObject))
         g.add((uri, RDFS.label, Literal(label)))
         g.add((uri, PROBS.objectName, Literal(label)))
+
+        if "basis" in self.options:
+            basis_ns = (
+                Namespace(self.config.probs_rdf_basis_prefix)
+                if self.config.probs_rdf_basis_prefix
+                else None
+            )
+            metric_uri = parse_uri(
+                self.config,
+                self.options["basis"],
+                default_ns=basis_ns
+            )
+            g.add((uri, PROBS.objectMetric, metric_uri))
 
         # ComposedOf relationships
         if "parent_object" in self.options:
