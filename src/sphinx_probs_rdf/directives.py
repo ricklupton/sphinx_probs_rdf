@@ -238,9 +238,16 @@ class SystemObjectDescription(ObjectDescription):
         new_node = nodes.admonition("", *node.children)
         new_node["classes"] = node["classes"] + ["toggle", nest_depth]  # type: ignore
 
-        # Replace desc_content with paragraph and desc_signature with title
+        # Replace desc_content with paragraph and desc_signature with title.
+        # Keep an invisible `target` node carrying the signature's ids: the
+        # LaTeX writer only emits a `\label` for ids on node types it knows
+        # how to anchor (e.g. desc_signature, target), not for a plain
+        # title inside an admonition. Without this, the domain's
+        # Process/Object Index entries produce unresolved `\pageref`s
+        # ("??" page numbers) in the PDF, even though HTML anchors still
+        # work (the id survives on the title node there too).
         for sig in new_node.findall(addnodes.desc_signature):
-            sig.replace_self([nodes.title("", "", *sig.children)])
+            sig.replace_self([nodes.target(), nodes.title("", "", *sig.children)])
         for content in new_node.findall(addnodes.desc_content):
             content.replace_self(content.children)
 
