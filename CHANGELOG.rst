@@ -5,6 +5,9 @@ Changelog
 Unreleased
 ----------
 
+v0.6.0 (2026-09-15)
+-------------------
+
 New features to support forthcoming modelling tools based on the system definitions parsed here:
 
 - New ``system:parameter`` directive: a named scalar that can be referenced by name from an object's ``:factors:`` or a recipe item, so uncertainty in the parameter is shared between them.
