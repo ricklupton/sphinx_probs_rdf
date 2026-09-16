@@ -155,7 +155,14 @@ def setup(app: Sphinx) -> Dict[str, Any]:
     elif "nb_mime_priority_overrides" in app.config:
         app.config["nb_mime_priority_overrides"] = NB_RENDER_PRIORITY_NEW
     else:
-        app.add_config_value("nb_render_priority", NB_RENDER_PRIORITY, "probs_rdf")
+        # "probs_rdf" here is not one of Sphinx's recognised rebuild targets
+        # ('', 'env', 'html', ...) -- carried over from the jupyter-book example
+        # this was based on. Sphinx treats it like '' (no special rebuild).
+        app.add_config_value(
+            "nb_render_priority",
+            NB_RENDER_PRIORITY,
+            "probs_rdf",  # type: ignore[arg-type]
+        )
         app.add_config_value(
             "nb_mime_priority_overrides", NB_RENDER_PRIORITY_NEW, "env"
         )

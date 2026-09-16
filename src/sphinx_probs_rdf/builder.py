@@ -1,5 +1,5 @@
 import os.path
-from typing import Set, cast, Optional
+from typing import AbstractSet, Set, cast, Optional
 
 from docutils.nodes import Node
 from sphinx.builders import Builder
@@ -27,7 +27,7 @@ class ProbsSystemRDFBuilder(Builder):
         assert self.env
         return self.env.found_docs
 
-    def prepare_writing(self, docnames: Set[str]) -> None:
+    def prepare_writing(self, docnames: AbstractSet[str]) -> None:
         return
 
     def write_doc(self, docname: str, doctree: Node) -> None:

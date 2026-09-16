@@ -1,8 +1,19 @@
 from collections import defaultdict
-from typing import Any, List, Dict, Iterator, Tuple, Optional, NamedTuple, cast
+from typing import (
+    AbstractSet,
+    Any,
+    ClassVar,
+    List,
+    Dict,
+    Iterator,
+    Tuple,
+    Optional,
+    NamedTuple,
+    cast,
+)
 
 from docutils import nodes
-from docutils.nodes import Node, Element
+from docutils.nodes import Node, Element, reference
 from docutils.parsers.rst import directives  # type: ignore
 from rdflib import ConjunctiveGraph, URIRef, Literal, BNode, Namespace  # type: ignore
 from rdflib.namespace import RDF, RDFS  # type: ignore
@@ -222,6 +233,13 @@ class Parameter(SphinxDirective):
 class SystemObjectDescription(ObjectDescription):
     has_content = True
     required_arguments = 1
+    signature_prefix: str
+
+    def get_nesting_depth(self) -> int:
+        raise NotImplementedError
+
+    def define_graph(self, g, uri: str, sig: str) -> None:
+        raise NotImplementedError
 
     def run(self) -> List[Node]:
         """Override to return admonitions rather than descs.
@@ -710,7 +728,7 @@ class SystemDomain(Domain):
         "parameter": Parameter,
     }
     indices = [ProcessIndex, ObjectIndex]
-    initial_data: dict = {
+    initial_data: ClassVar[Dict[str, Any]] = {
         "things": {},
         "process_recipe": {},
         "graph": None,
@@ -776,7 +794,7 @@ class SystemDomain(Domain):
         g = self.get_graph(docname)
         g.remove((None, None, None))
 
-    def merge_domaindata(self, docnames: List[str], otherdata: Dict) -> None:
+    def merge_domaindata(self, docnames: AbstractSet[str], otherdata: Dict) -> None:
         # XXX check duplicates?
         for uri, thing in otherdata["things"].items():
             if thing.docname in docnames:
@@ -820,7 +838,7 @@ class SystemDomain(Domain):
         target: str,
         node: pending_xref,
         contnode: Element,
-    ) -> Optional[Element]:
+    ) -> Optional[reference]:
 
         matches = self.find_thing(target, thing_type=thing_type)
 

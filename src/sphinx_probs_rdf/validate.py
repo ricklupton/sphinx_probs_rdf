@@ -71,10 +71,10 @@ def validate(system: ParsedSystem) -> List[str]:
             # legitimate.
             bare_percent = [i for i in items if i.is_share and i.share_layer is None]
             bare_bases = {
-                system.objects[i.object_name].basis
+                basis
                 for i in bare_percent
                 if i.object_name in system.objects
-                and system.objects[i.object_name].basis is not None
+                if (basis := system.objects[i.object_name].basis) is not None
             }
             if len(bare_bases) > 1:
                 problems.append(
