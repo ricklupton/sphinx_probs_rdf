@@ -3,6 +3,7 @@
 ```{system:object} Steel
 ---
 basis: mass
+traded: import
 ---
 ```
 

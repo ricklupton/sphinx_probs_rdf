@@ -1,8 +1,10 @@
 """Per-file namespaces, placeholders and ``rdfs:isDefinedBy`` on the Sphinx path, and
 that the standalone loader reads the same files to the same identifiers."""
 
+import re
+
 import pytest
-from rdflib import BNode, Graph, Namespace, URIRef
+from rdflib import BNode, Graph, Literal, Namespace, URIRef
 from rdflib.namespace import RDF, RDFS
 
 from sphinx_probs_rdf.directives import PROBS
@@ -50,6 +52,13 @@ def test_a_placeholder_is_a_blank_node(app, status, warning):
     assert len(consumed) == 1 and isinstance(consumed[0], BNode)
 
 
+@pytest.mark.sphinx("html", testroot="namespaces", confoverrides=CONF)
+def test_a_placeholder_is_shown_by_its_label(app, status, warning):
+    app.builder.build_all()
+    html = (app.outdir / "index.html").read_text()
+    assert "<em>_:HotBand</em>" in html
+
+
 @pytest.mark.sphinx("probs_rdf", testroot="namespaces", confoverrides=CONF)
 def test_a_basis_never_takes_a_file_s_namespace(app, status, warning):
     g = _graph(app)
@@ -81,3 +90,19 @@ def test_the_loader_reads_the_same_identifiers(app, status, warning):
         assert {str(o) for o in g.objects(URIRef(name), RDFS.isDefinedBy)} == {
             definition.namespace
         }
+
+
+@pytest.mark.sphinx("probs_rdf", testroot="namespaces", confoverrides=CONF)
+def test_one_way_trade_is_recorded_as_traded_without_an_error(app, status, warning):
+    g = _graph(app)
+    assert "fully traded" not in warning.getvalue()
+    assert (SYS.Steel, PROBS.objectIsTraded, Literal(True)) in g
+
+
+@pytest.mark.sphinx("html", testroot="namespaces", confoverrides=CONF)
+def test_a_recipe_amount_is_shown_as_written(app, status, warning):
+    app.builder.build_all()
+    html = (app.outdir / "index.html").read_text()
+    text = " ".join(re.sub(r"<[^>]+>", " ", html).replace("&#160;", " ").split())
+    assert "_:HotBand 1 kg" in text
+    assert "quantitykind" not in text

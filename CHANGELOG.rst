@@ -29,6 +29,10 @@ Fixes:
 
 - A bare ``:basis:`` value with no ``probs_rdf_basis_prefix`` uses the project's system prefix, never a file's own namespace.
 
+- One-way trade (``traded: import`` or ``traded: export``) is no longer logged as an error. The RDF records it as ``probs:objectIsTraded true``, since PRObs has one flag for trade; the loader keeps the (import, export) pair.
+
+- A process's rendered recipe shows each amount as written (``83.4 %``, ``0.7 kg``) rather than as a quantity in a QUDT quantity kind; each recipe item carries it as its ``rdfs:label``. A placeholder is shown by its label rather than as an unresolved link.
+
 v0.6.0 (2026-09-15)
 -------------------
 

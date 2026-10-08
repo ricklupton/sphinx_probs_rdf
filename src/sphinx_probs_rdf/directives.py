@@ -486,7 +486,10 @@ class Process(SystemObjectDescription):
 
         def resolve(name: str):
             if is_placeholder(name):
-                return placeholders.setdefault(name, BNode())
+                if name not in placeholders:
+                    placeholders[name] = BNode()
+                    g.add((placeholders[name], RDFS.label, Literal(name)))
+                return placeholders[name]
             return self.uri(name)
 
         recipe_consumes: List[BNode] = []
@@ -542,6 +545,10 @@ def _process_inputs_outputs(g, config, uri, relation, objects, recipe_items, res
             g.add((item, PROBS_RECIPE.object, obj_uri))
             g.add((item, PROBS_RECIPE.quantity, Literal(scale * obj["amount"])))
             g.add((item, PROBS_RECIPE.metric, metric))
+            # The amount as written, which is what a reader of the rendered recipe
+            # wants: "83.4 %" rather than a dimensionless QUDT quantity.
+            written = f"{obj['amount']:g} {unit or ''}".strip()
+            g.add((item, RDFS.label, Literal(written)))
             recipe_items.append(item)
 
 
@@ -663,11 +670,9 @@ class Object(SystemObjectDescription):
 
         if "traded" in self.options:
             imp, exp = self.options["traded"]
-            if imp != exp:
-                logger.error(
-                    "Currently objects must be either fully traded"
-                    "(imports and exports) or not at all"
-                )
+            # One-way trade (``traded: import`` or ``traded: export``) is a valid
+            # definition, and the loader keeps the (import, export) pair. The PRObs
+            # ontology has one flag for trade, so the RDF records it as traded.
             g.add((uri, PROBS.objectIsTraded, Literal(imp or exp)))
 
         if "equivalent" in self.options:
