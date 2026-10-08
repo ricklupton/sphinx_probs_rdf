@@ -31,6 +31,7 @@ from sphinx.util.nodes import make_refnode, find_pending_xref_condition, make_id
 from sphinx.util import logging
 
 from . import grammar
+from .identifiers import Prefixes, is_placeholder
 from .grammar import (  # noqa: F401 -- re-exported for backwards compatibility
     parse_yaml_value,
     parse_yaml_mapping,
@@ -45,6 +46,44 @@ from .grammar import (  # noqa: F401 -- re-exported for backwards compatibility
 )
 
 logger = logging.getLogger(__name__)
+
+
+def config_prefixes(config) -> Prefixes:
+    """The project's prefix table: ``probs_rdf_extra_prefixes``, with
+    ``probs_rdf_system_prefix`` as the default (``""``) namespace.
+
+    The standalone loader takes the same table as its ``prefixes`` argument, so that a
+    document means the same identifiers on both paths.
+    """
+    return Prefixes(
+        {**config.probs_rdf_extra_prefixes, "": config.probs_rdf_system_prefix or ""}
+    )
+
+
+def current_namespace(env) -> Optional[str]:
+    """The namespace of bare names set by the last ``system:prefix`` directive in this
+    document, if any."""
+    return env.ref_context.get("system:prefix")
+
+
+class SystemPrefix(SphinxDirective):
+    """``system:prefix`` -- set the namespace of the bare names that follow in this
+    document, like ``py:currentmodule``.
+
+    The argument is a prefix name (``frag`` or ``frag:``) or a full ``<iri>``; ``:``
+    restores the project's default. An included file that sets it changes it for the
+    rest of the including document too.
+    """
+
+    required_arguments = 1
+
+    def run(self) -> List[Node]:
+        try:
+            namespace = config_prefixes(self.config).namespace(self.arguments[0])
+        except ValueError as err:
+            raise self.error(str(err))
+        self.env.ref_context["system:prefix"] = namespace
+        return []
 
 
 class TTL(CodeBlock):
@@ -75,7 +114,9 @@ class StartSubProcessesDirective(SphinxDirective):
     required_arguments = 1
 
     def run(self):
-        uri = parse_uri(self.config, self.arguments[0])
+        uri = parse_uri(
+            self.config, self.arguments[0], system_ns=current_namespace(self.env)
+        )
         self.env.ref_context["system:process"] = uri
         parents = self.env.ref_context.setdefault("system:processes", [])
         parents.append(uri)
@@ -88,7 +129,9 @@ class StartSubObjectsDirective(SphinxDirective):
     required_arguments = 1
 
     def run(self):
-        uri = parse_uri(self.config, self.arguments[0])
+        uri = parse_uri(
+            self.config, self.arguments[0], system_ns=current_namespace(self.env)
+        )
         self.env.ref_context["system:object"] = uri
         parents = self.env.ref_context.setdefault("system:objects", [])
         parents.append(uri)
@@ -169,8 +212,9 @@ class ObjectEquivalentTo(SphinxDirective):
             self.options["class"] = ["admonition-object-equivalent-to"]
 
         # self.assert_has_content()
-        uri1 = parse_uri(self.config, self.arguments[0])
-        uri2 = parse_uri(self.config, self.arguments[1])
+        system_ns = current_namespace(self.env)
+        uri1 = parse_uri(self.config, self.arguments[0], system_ns=system_ns)
+        uri2 = parse_uri(self.config, self.arguments[1], system_ns=system_ns)
 
         node = nodes.admonition()
 
@@ -241,6 +285,20 @@ class SystemObjectDescription(ObjectDescription):
     def define_graph(self, g, uri: str, sig: str) -> None:
         raise NotImplementedError
 
+    def split(
+        self, item: str, default: Optional[str] = None
+    ) -> Tuple[URIRef, Optional[str]]:
+        """`item` as an identifier, read where this definition is written, and the
+        namespace it was written in. See `Prefixes.split`."""
+        identifier, namespace = config_prefixes(self.config).split(
+            item, default=current_namespace(self.env), default_local=default
+        )
+        return URIRef(identifier), namespace
+
+    def uri(self, item: str, default: Optional[str] = None) -> URIRef:
+        """`item` as an identifier, read where this definition is written."""
+        return self.split(item, default)[0]
+
     def run(self) -> List[Node]:
         """Override to return admonitions rather than descs.
 
@@ -282,7 +340,9 @@ class SystemObjectDescription(ObjectDescription):
 
         Return URI of the thing.
         """
-        uri = parse_uri(self.config, sig)
+        if is_placeholder(sig):
+            raise ValueError(f"a placeholder ({sig!r}) cannot be defined")
+        uri, namespace = self.split(sig)
         signode["uri"] = uri
 
         # XXX is there is a better desc_XXX node for this?
@@ -296,6 +356,8 @@ class SystemObjectDescription(ObjectDescription):
         domain = cast(SystemDomain, self.env.get_domain("system"))
         g = domain.get_graph(self.env.docname)
         self.define_graph(g, uri, sig)
+        if namespace:
+            g.add((uri, RDFS.isDefinedBy, URIRef(namespace)))
 
         return uri
 
@@ -319,12 +381,14 @@ class Process(SystemObjectDescription):
         domain.note_process_recipe(
             uri,
             [
-                parse_uri(self.config, obj["object"])
+                self.uri(obj["object"])
                 for obj in self.options.get("consumes", [])
+                if not is_placeholder(obj["object"])
             ],
             [
-                parse_uri(self.config, obj["object"])
+                self.uri(obj["object"])
                 for obj in self.options.get("produces", [])
+                if not is_placeholder(obj["object"])
             ],
         )
 
@@ -358,8 +422,9 @@ class Process(SystemObjectDescription):
 
         # ComposedOf relationships
         # determine parent
+        parent: Optional[URIRef]
         if "parent" in self.options:
-            parent = parse_uri(self.config, self.options["parent"])
+            parent = self.uri(self.options["parent"])
         else:
             parent = self.env.ref_context.get("system:process")
         if parent:
@@ -368,10 +433,10 @@ class Process(SystemObjectDescription):
             if child.startswith("*"):
                 # include children of the named process -- this is expanded
                 # later as a postprocessing step once all processes are defined.
-                child_uri = parse_uri(self.config, child[1:])
+                child_uri = self.uri(child[1:])
                 g.add((uri, PROBS.processComposedOfChildrenOf, child_uri))
             else:
-                child_uri = parse_uri(self.config, child)
+                child_uri = self.uri(child)
                 g.add((uri, PROBS.processComposedOf, child_uri))
 
         # Recipes (inputs and outputs)
@@ -381,13 +446,25 @@ class Process(SystemObjectDescription):
             defs, self.options.get("consumes", []), self.options.get("produces", [])
         )
 
+        # A placeholder is a blank node, one per label *in this process*: its label
+        # is scoped to the process, as the loader and the linker scope it.
+        placeholders: Dict[str, BNode] = {}
+
+        def resolve(name: str):
+            if is_placeholder(name):
+                if name not in placeholders:
+                    placeholders[name] = BNode()
+                    g.add((placeholders[name], RDFS.label, Literal(name)))
+                return placeholders[name]
+            return self.uri(name)
+
         recipe_consumes: List[BNode] = []
         recipe_produces: List[BNode] = []
         _process_inputs_outputs(
-            g, self.config, uri, "consumes", consumes, recipe_consumes
+            g, self.config, uri, "consumes", consumes, recipe_consumes, resolve
         )
         _process_inputs_outputs(
-            g, self.config, uri, "produces", produces, recipe_produces
+            g, self.config, uri, "produces", produces, recipe_produces, resolve
         )
         if recipe_consumes or recipe_produces:
             recipe = BNode()
@@ -398,10 +475,10 @@ class Process(SystemObjectDescription):
                 g.add((recipe, PROBS_RECIPE.produces, item))
 
 
-def _process_inputs_outputs(g, config, uri, relation, objects, recipe_items):
+def _process_inputs_outputs(g, config, uri, relation, objects, recipe_items, resolve):
     units = config.probs_rdf_units
     for obj in objects:
-        obj_uri = parse_uri(config, obj["object"])
+        obj_uri = resolve(obj["object"])
         g.add((uri, PROBS[relation], obj_uri))
 
         if "amount" in obj:
@@ -434,34 +511,31 @@ def _process_inputs_outputs(g, config, uri, relation, objects, recipe_items):
             g.add((item, PROBS_RECIPE.object, obj_uri))
             g.add((item, PROBS_RECIPE.quantity, Literal(scale * obj["amount"])))
             g.add((item, PROBS_RECIPE.metric, metric))
+            # The amount as written, which is what a reader of the rendered recipe
+            # wants: "83.4 %" rather than a dimensionless QUDT quantity.
+            written = f"{obj['amount']:g} {unit or ''}".strip()
+            g.add((item, RDFS.label, Literal(written)))
             recipe_items.append(item)
 
 
-def parse_uri(config, item, default=None, default_ns=None):
-    """Convert a string to a URIRef.
+def parse_uri(config, item, default=None, default_ns=None, system_ns=None):
+    """Convert a string to a URIRef, as `Prefixes.split` reads it.
 
-    A blank prefix or bare id refers to `default_ns` if given, else the namespace
-    given by the `probs_rdf_system_prefix` config variable -- object/process names
-    themselves always want the latter (the default), but :basis:'s objectMetric
-    passes its own `default_ns` (`probs_rdf_basis_prefix`) so a bare basis name
-    doesn't land in the same namespace as real objects/processes.
+    A blank prefix or bare id refers to `default_ns` if given, else to `system_ns` --
+    the namespace set by ``system:prefix`` -- else to the namespace given by the
+    `probs_rdf_system_prefix` config variable. Object/process names always want one
+    of the latter two, but :basis:'s objectMetric passes its own `default_ns`
+    (`probs_rdf_basis_prefix`) so a bare basis name doesn't land in the same namespace
+    as real objects/processes.
 
-    A missing suffix means the same as the object currently being defined.
-
+    A missing suffix means `default`, the local name of the object being defined.
     """
-    if item and item[0] == "<" and item[-1] == ">":
-        return URIRef(item[1:-1])
-    prefix, _, item_id = item.rpartition(":")
-    if not prefix:
-        ns = (
-            default_ns if default_ns is not None
-            else Namespace(config.probs_rdf_system_prefix)
+    ns = default_ns if default_ns is not None else system_ns
+    return URIRef(
+        config_prefixes(config).expand(
+            item, default=None if ns is None else str(ns), default_local=default
         )
-    else:
-        ns = Namespace(config.probs_rdf_extra_prefixes[prefix])
-    if not item_id:
-        item_id = default if default is not None else ""
-    return getattr(ns, item_id)
+    )
 
 
 class Object(SystemObjectDescription):
@@ -512,10 +586,13 @@ class Object(SystemObjectDescription):
         g.add((uri, PROBS.objectName, Literal(label)))
 
         if "basis" in self.options:
-            basis_ns = (
-                Namespace(self.config.probs_rdf_basis_prefix)
-                if self.config.probs_rdf_basis_prefix
-                else None
+            # A basis is not a system identifier, so a namespace set by system:prefix
+            # never applies to it: without a basis prefix it falls back to the
+            # *project's* system prefix, as it always has.
+            basis_ns = Namespace(
+                self.config.probs_rdf_basis_prefix
+                or self.config.probs_rdf_system_prefix
+                or ""
             )
             metric_uri = parse_uri(
                 self.config,
@@ -525,8 +602,9 @@ class Object(SystemObjectDescription):
             g.add((uri, PROBS.objectMetric, metric_uri))
 
         # ComposedOf relationships
+        parent: Optional[URIRef]
         if "parent_object" in self.options:
-            parent = parse_uri(self.config, self.options["parent_object"])
+            parent = self.uri(self.options["parent_object"])
         else:
             parent = self.env.ref_context.get("system:object")
         if parent:
@@ -535,19 +613,17 @@ class Object(SystemObjectDescription):
             if child.startswith("*"):
                 # include children of the named object -- this is expanded later
                 # as a postprocessing step once all processes are defined.
-                child_uri = parse_uri(self.config, child[1:])
+                child_uri = self.uri(child[1:])
                 g.add((uri, PROBS.objectComposedOfChildrenOf, child_uri))
             else:
-                child_uri = parse_uri(self.config, child)
+                child_uri = self.uri(child)
                 g.add((uri, PROBS.objectComposedOf, child_uri))
 
         if "traded" in self.options:
             imp, exp = self.options["traded"]
-            if imp != exp:
-                logger.error(
-                    "Currently objects must be either fully traded"
-                    "(imports and exports) or not at all"
-                )
+            # One-way trade (``traded: import`` or ``traded: export``) is a valid
+            # definition, and the loader keeps the (import, export) pair. The PRObs
+            # ontology has one flag for trade, so the RDF records it as traded.
             g.add((uri, PROBS.objectIsTraded, Literal(imp or exp)))
 
         if "equivalent" in self.options:
@@ -573,8 +649,9 @@ class Object(SystemObjectDescription):
         """
         signatures = self.get_signatures()
         assert len(signatures) == 1, "only assuming 1 signature can be given"
-        default_item_id = signatures[0]
-        return parse_uri(self.config, item, default_item_id)
+        uri, namespace = self.split(signatures[0])
+        local = str(uri)[len(namespace):] if namespace is not None else None
+        return self.uri(item, local)
 
 
 class ObjectIndex(Index):
@@ -726,6 +803,7 @@ class SystemDomain(Domain):
         "object": Object,
         "object-equivalent-to": ObjectEquivalentTo,
         "parameter": Parameter,
+        "prefix": SystemPrefix,
     }
     indices = [ProcessIndex, ObjectIndex]
     initial_data: ClassVar[Dict[str, Any]] = {
@@ -821,10 +899,18 @@ class SystemDomain(Domain):
         else:
             thing_types = self.objtypes_for_role(thing_type) or []
 
+        qualified = None
+        if ":" in name or name.startswith("<"):
+            # A prefixed or full name means exactly one identifier.
+            try:
+                qualified = str(parse_uri(self.env.config, name))
+            except ValueError:
+                qualified = None
         matches = [
             (uri, thing)
             for uri, thing in self.things.items()
-            if uri.endswith(name) and thing.thing_type in thing_types
+            if (uri == qualified if qualified is not None else uri.endswith(name))
+            and thing.thing_type in thing_types
         ]
 
         return matches

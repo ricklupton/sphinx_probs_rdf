@@ -5,6 +5,31 @@ Changelog
 Unreleased
 ----------
 
+New features:
+
+- The standalone loader takes a prefix table (``prefixes=``), and expands every system identifier as the Sphinx path expands it.
+
+- A ``system:prefix`` directive sets the namespace of the bare names that follow it in a document.
+
+- Every definition records the namespace it was declared in (``ObjectDef.namespace``/``ProcessDef.namespace``), emitted as ``rdfs:isDefinedBy``.
+
+- New ``link_model``: pick one model out of a library of definitions with a list of ``ProcessSelection`` (a scope, and an optional remapping of the objects its processes refer to, which fills placeholders ``_:label``), override object fields with ``object_overrides``, and give everything its local name.
+
+BREAKING CHANGES:
+
+- The standalone loader no longer keeps a prefixed name as written when it has no prefix table: now ``prefix:Name`` is an error (an unknown prefix), and ``:Name`` becomes ``Name``.
+
+- Defining the same identifier twice is an error in the loader (before, it was a warning, and the later definition replaced the earlier one).
+
+- A prefixed name's prefix is everything before its *first* colon, as in Turtle; it was everything before the last.
+
+Fixes:
+
+- One-way trade (``traded: import`` or ``traded: export``) is no longer logged as an error.
+
+- A process's rendered recipe shows each amount as written (``83.4 %``, ``0.7 kg``) rather than as a quantity in a QUDT quantity kind.
+
+
 v0.6.0 (2026-09-15)
 -------------------
 

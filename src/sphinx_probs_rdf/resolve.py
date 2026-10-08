@@ -3,7 +3,7 @@ from docutils import nodes
 from sphinx.transforms.post_transforms import SphinxPostTransform
 from sphinx import addnodes
 
-from rdflib import URIRef, namespace
+from rdflib import BNode, URIRef, namespace
 from sphinx_probs_rdf.directives import (
     SystemDomain,
     PROBS,
@@ -146,6 +146,7 @@ def build_process_info(g, info_node):
                 "object": g.value(item, PROBS_RECIPE.object),
                 "amount": float(g.value(item, PROBS_RECIPE.quantity)),
                 "metric": g.value(item, PROBS_RECIPE.metric),
+                "as_written": g.value(item, namespace.RDFS.label),
             }
             for item in g[recipe : PROBS_RECIPE.consumes :]
         ]
@@ -154,6 +155,7 @@ def build_process_info(g, info_node):
                 "object": g.value(item, PROBS_RECIPE.object),
                 "amount": float(g.value(item, PROBS_RECIPE.quantity)),
                 "metric": g.value(item, PROBS_RECIPE.metric),
+                "as_written": g.value(item, namespace.RDFS.label),
             }
             for item in g[recipe : PROBS_RECIPE.produces :]
         ]
@@ -212,17 +214,34 @@ def _recipe_table(g, objects):
     table_data = [
         [
             _system_id_link(g, obj["object"], nodes.paragraph),
-            nodes.literal("", "%.1f %s" % (obj["amount"], obj["metric"]))
-            if "amount" in obj
-            else "",
+            nodes.literal("", _amount_text(obj)) if "amount" in obj else "",
         ]
         for obj in objects
     ]
     return build_table_from_list(header_rows + table_data, header_rows=1)
 
 
+def _amount_text(obj) -> str:
+    """A recipe amount as written, or failing that as recorded."""
+    if obj.get("as_written") is not None:
+        return str(obj["as_written"])
+    return "%.1f %s" % (obj["amount"], obj["metric"])
+
+
 def _system_id_link(g, sys_id, within=None):
-    """Insert a cross reference to another object/process."""
+    """Insert a cross reference to another object/process.
+
+    A placeholder (a blank node) has nothing to link to: it is shown by its label,
+    ``_:HotBand``, as written.
+    """
+    if isinstance(sys_id, BNode):
+        label = str(g.value(sys_id, namespace.RDFS.label) or sys_id.n3())
+        text = nodes.emphasis(label, label)
+        if within is not None:
+            wrapper = within("", "")
+            wrapper += text
+            return wrapper
+        return text
     refnode = addnodes.pending_xref(
         "", refdomain="system", refexplicit=False, reftype="ref", reftarget=sys_id
     )

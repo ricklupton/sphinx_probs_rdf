@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import List
 
+from .identifiers import is_placeholder
 from .model import ParsedSystem
 from .units import UnitTable
 
@@ -24,6 +25,9 @@ def validate(system: ParsedSystem) -> List[str]:
 
     for process in system.processes.values():
         for item in process.consumes + process.produces:
+            if is_placeholder(item.object_name):
+                # Open by design: filled when a model is linked.
+                continue
             if item.object_name not in system.objects:
                 problems.append(
                     f"{process.source}: process {process.name!r} references object "

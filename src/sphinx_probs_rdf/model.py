@@ -4,8 +4,10 @@ Plain dataclasses describing a system of objects and processes, independent of h
 they were parsed (Sphinx/RDF, or the standalone :mod:`sphinx_probs_rdf.loader`).
 
 Identifiers (``ObjectDef.name`` / ``ProcessDef.name`` / everywhere a name is
-referenced, e.g. ``RecipeItem.object_name``) are opaque strings, exactly as written
-in the source document.
+referenced, e.g. ``RecipeItem.object_name``) are plain strings: identifiers expanded
+with the prefix table (see :mod:`sphinx_probs_rdf.identifiers`), which without one are
+bare names exactly as written. Each definition also records the namespace it was
+declared in. A placeholder (``_:label``) is kept as written.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from .identifiers import is_placeholder
 from .units import UnitTable
 
 
@@ -126,6 +129,10 @@ class ObjectDef:
     source: Optional[str] = None
     #: The ``:extra:`` YAML mapping. ``{}`` if ``:extra:`` wasn't given.
     extra: Dict[str, Any] = field(default_factory=dict)
+    #: The namespace this object was declared in (``rdfs:isDefinedBy`` in RDF output),
+    #: or ``None`` if it was written as a full ``<iri>``. Its name within that
+    #: namespace is the rest of its identifier.
+    namespace: Optional[str] = None
 
 
 @dataclass
@@ -147,12 +154,27 @@ class ProcessDef:
     #: The ``:extra:`` YAML mapping.
     #: ``{}`` if ``:extra:`` wasn't given.
     extra: Dict[str, Any] = field(default_factory=dict)
+    #: See `ObjectDef.namespace`.
+    namespace: Optional[str] = None
 
     @property
     def has_recipe(self) -> bool:
         """Whether this process defines a recipe (amounts), not just connectivity.
         """
         return any(i.amount is not None for i in self.consumes + self.produces)
+
+    def references(self) -> List[str]:
+        """Every object this process refers to: its recipe items and its ``per``
+        object."""
+        names = [i.object_name for i in self.consumes + self.produces]
+        if isinstance(self.per, dict) and isinstance(self.per.get("object"), str):
+            names.append(self.per["object"])
+        return names
+
+    def placeholders(self) -> List[str]:
+        """The placeholders (``_:label``) this process refers to, in order, once
+        each."""
+        return list(dict.fromkeys(n for n in self.references() if is_placeholder(n)))
 
 
 @dataclass
@@ -161,6 +183,10 @@ class ParsedSystem:
     processes: Dict[str, ProcessDef]
     parameters: Dict[str, ParameterDef]
     units: UnitTable
+    #: The prefix table identifiers were expanded with (its ``""`` entry the default
+    #: namespace). ``None`` for a linked model, whose names are not identifiers to
+    #: expand. See :mod:`sphinx_probs_rdf.identifiers`.
+    prefixes: Optional[Dict[str, str]] = None
 
     def children_of_object(self, name: str) -> List[str]:
         return sorted(
