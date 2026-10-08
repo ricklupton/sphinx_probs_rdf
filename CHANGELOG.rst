@@ -5,6 +5,30 @@ Changelog
 Unreleased
 ----------
 
+New features:
+
+- The standalone loader takes a prefix table (``prefixes=``). Without one, identifiers are used exactly as written, as before; with one, every system identifier is expanded as the Sphinx path expands it.
+
+- A file's front matter can set the namespace of its bare names (``system_prefix: name`` or ``<iri>``), on both the loader and the Sphinx path. An included file keeps its own.
+
+- Placeholders (``_:label``): an object a process refers to without naming it. A blank node in RDF output, one per label per process.
+
+- Every definition records the namespace it was declared in (``ObjectDef.namespace``/``ProcessDef.namespace``), emitted as ``rdfs:isDefinedBy``, and its local name.
+
+- New ``link_model`` with ``ProcessSelection``, ``RecipeSubstitution`` and ``ObjectOverride``: pick one model out of a library of definitions, wire its placeholders, and flatten it to local names.
+
+- A prefixed or full cross-reference target (``{system:ref}`frag:Cast```) now names exactly one definition.
+
+BREAKING CHANGES:
+
+- Defining the same identifier twice is an error in the loader (it was a warning, and the later definition replaced the earlier one).
+
+- A prefixed name's prefix is everything before its *first* colon, as in Turtle; it was everything before the last.
+
+Fixes:
+
+- A bare ``:basis:`` value with no ``probs_rdf_basis_prefix`` uses the project's system prefix, never a file's own namespace.
+
 v0.6.0 (2026-09-15)
 -------------------
 
