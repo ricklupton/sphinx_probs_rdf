@@ -350,43 +350,36 @@ def _localise(
             owners[name] = identifier
             local[identifier] = name
 
-    def rename(identifier: str) -> str:
-        """A reference's local name: its definition's, else how it was written."""
-        if identifier in local:
-            return local[identifier]
-        spellings = parsed.local_names.get(identifier, set())
-        if len(spellings) == 1:
-            return next(iter(spellings))
-        if not spellings:
-            return identifier
-        raise LinkError(
-            f"{prefixes.compact(identifier)} is written with different local names "
-            f"({sorted(spellings)}) and is not defined in the model to settle it"
-        )
-
     def rename_items(items: List[RecipeItem]) -> List[RecipeItem]:
-        return [replace(i, object_name=rename(i.object_name)) for i in items]
+        return [replace(i, object_name=local[i.object_name]) for i in items]
+
+    def in_model(names: List[str]) -> List[str]:
+        """The hierarchy links that stay inside the model, renamed."""
+        return [local[n] for n in names if n in local]
 
     linked_objects: Dict[str, ObjectDef] = {}
     for identifier, obj in objects.items():
+        parent = obj.parent
+        if parent is not None:
+            parent = _parent_name(parent, local, prefixes, identifier)
         linked_objects[local[identifier]] = replace(
             obj,
             name=local[identifier],
-            parent=None if obj.parent is None else rename(obj.parent),
-            composed_of=[rename(c) for c in obj.composed_of],
-            composed_of_children_of=[rename(c) for c in obj.composed_of_children_of],
+            parent=parent,
+            composed_of=in_model(obj.composed_of),
+            composed_of_children_of=in_model(obj.composed_of_children_of),
         )
     linked_processes: Dict[str, ProcessDef] = {}
     for identifier, proc in processes.items():
         per = proc.per
         if isinstance(per, dict) and isinstance(per.get("object"), str):
-            per = {**per, "object": rename(per["object"])}
+            per = {**per, "object": local[per["object"]]}
         linked_processes[local[identifier]] = replace(
             proc,
             name=local[identifier],
-            parent=None if proc.parent is None else rename(proc.parent),
-            composed_of=[rename(c) for c in proc.composed_of],
-            composed_of_children_of=[rename(c) for c in proc.composed_of_children_of],
+            parent=local.get(proc.parent) if proc.parent is not None else None,
+            composed_of=in_model(proc.composed_of),
+            composed_of_children_of=in_model(proc.composed_of_children_of),
             consumes=rename_items(proc.consumes),
             produces=rename_items(proc.produces),
             per=per,
@@ -397,5 +390,23 @@ def _localise(
         parameters=dict(parsed.parameters),
         units=parsed.units,
         prefixes=None,
-        local_names={name: {name} for name in [*linked_objects, *linked_processes]},
+    )
+
+
+def _parent_name(
+    parent: str, local: Dict[str, str], prefixes: Prefixes, child: str
+) -> str:
+    """An object's parent in the linked model.
+
+    A declared parent is part of the model (it comes in with its members) and goes by
+    its local name. An undeclared one has no local name to go by, except when
+    identifiers are opaque and it is already one.
+    """
+    if parent in local:
+        return local[parent]
+    if prefixes.opaque:
+        return parent
+    raise LinkError(
+        f"object {prefixes.compact(child)} has parent {prefixes.compact(parent)}, "
+        "which is never declared; declare it as an object"
     )

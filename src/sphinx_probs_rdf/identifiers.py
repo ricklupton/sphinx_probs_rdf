@@ -41,9 +41,32 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional
+
+import yaml
 
 log = logging.getLogger(__name__)
+
+#: The front-matter key that sets the namespace of a file's bare names.
+SYSTEM_PREFIX_KEY = "system_prefix"
+
+
+def read_front_matter(text: str) -> Dict[str, Any]:
+    """The YAML front matter of a MyST document, or ``{}``.
+
+    Front matter is a block at the very start of the file between two ``---`` lines. The
+    loader and the Sphinx path both read it with this function, so they cannot disagree
+    about a file's ``system_prefix``.
+    """
+    lines = text.split("\n")
+    if not lines or lines[0].rstrip() != "---":
+        return {}
+    for end in range(1, len(lines)):
+        if lines[end].rstrip() in ("---", "..."):
+            data = yaml.safe_load("\n".join(lines[1:end])) or {}
+            return data if isinstance(data, dict) else {}
+    return {}
+
 
 #: The pseudo-prefix of a placeholder, as for a Turtle blank node. It cannot be
 #: declared.

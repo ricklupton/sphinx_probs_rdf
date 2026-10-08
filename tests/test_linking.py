@@ -20,6 +20,15 @@ PREFIXES = {"": US, "us": US, "rec": RECIPES, "alloc": ALLOCATED}
 #: A shared core with one hole, and two alternative readings of the mills, in nested
 #: namespaces -- nesting is what a namespace selection must not be confused by.
 LIBRARY = """
+```{system:object} Steel
+```
+
+```{system:object} MillProduct
+```
+
+```{system:object} Unused
+```
+
 ```{system:object} Semis
 ---
 parent_object: Steel
@@ -108,17 +117,63 @@ def test_a_linked_model_is_localised(library):
     model = link_model(library, RECIPES_MODEL)
     assert model.prefixes is None
     assert list(model.processes) == ["SheetSale", "HotStripMill"]
-    assert list(model.objects) == ["Semis", "HotBand", "Sheet", "Scrap"]
+    assert list(model.objects) == [
+        "Steel", "MillProduct", "Semis", "HotBand", "Sheet", "Scrap"
+    ]
     sale = model.processes["SheetSale"]
     assert [i.object_name for i in sale.consumes] == ["HotBand"]
     mill = model.processes["HotStripMill"]
     assert [i.object_name for i in mill.produces] == ["HotBand", "Scrap"]
 
 
-def test_undeclared_parents_keep_the_name_they_were_written_with(library):
+def test_declared_parents_come_in_with_their_members(library):
     model = link_model(library, RECIPES_MODEL)
     assert model.objects["Semis"].parent == "Steel"
     assert model.objects["HotBand"].parent == "MillProduct"
+    # Declared, but neither referred to nor a parent of anything in the model.
+    assert "Unused" not in model.objects
+
+
+def test_an_undeclared_parent_is_an_error_with_prefixes():
+    library = parse_markdown(
+        """
+```{system:object} Apples
+---
+parent_object: Fruit
+---
+```
+
+```{system:process} Eat
+---
+consumes: |
+  Apples = 1 kg
+---
+```
+""",
+        prefixes=PREFIXES,
+    )
+    with pytest.raises(LinkError, match="never declared; declare it"):
+        link_model(library, [ProcessSelection("us:")])
+
+
+def test_an_undeclared_parent_is_kept_when_identifiers_are_opaque():
+    library = parse_markdown(
+        """
+```{system:object} Apples
+---
+parent_object: Fruit
+---
+```
+
+```{system:process} Eat
+---
+consumes: |
+  Apples = 1 kg
+---
+```
+"""
+    )
+    assert link_model(library, [ProcessSelection(ALL)]).objects["Apples"].parent == "Fruit"
 
 
 def test_the_other_alternative_links_with_its_own_wiring(library):

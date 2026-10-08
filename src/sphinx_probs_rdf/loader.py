@@ -22,8 +22,6 @@ from typing import (
     Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union,
 )
 
-import yaml
-
 from docutils.parsers.rst import Directive
 from markdown_it.renderer import RendererHTML
 from markdown_it.token import Token
@@ -32,7 +30,12 @@ from myst_parser.parsers.directives import parse_directive_text
 from myst_parser.parsers.mdit import create_md_parser
 
 from . import grammar
-from .identifiers import Name, Prefixes, is_placeholder
+from .identifiers import (
+    SYSTEM_PREFIX_KEY,
+    Prefixes,
+    is_placeholder,
+    read_front_matter,
+)
 from .model import (
     FactorSpec,
     ObjectDef,
@@ -107,20 +110,6 @@ def _directive_fences(
             continue
         name, _, argument = info[1:].partition("}")
         yield name.strip(), argument.strip(), token
-
-
-#: The front-matter key that sets the namespace of a file's bare names.
-SYSTEM_PREFIX_KEY = "system_prefix"
-
-
-def _front_matter(text: str, md_config: MdParserConfig) -> Dict[str, Any]:
-    """The YAML front matter of `text`, or ``{}``."""
-    md = create_md_parser(md_config, RendererHTML)
-    tokens = md.parse(text)
-    if not tokens or tokens[0].type != "front_matter":
-        return {}
-    data = yaml.safe_load(tokens[0].content) or {}
-    return data if isinstance(data, dict) else {}
 
 
 def _recipe_items(
@@ -225,7 +214,7 @@ class _Parser:
         self.parse_text(path.read_text(), origin=path.name)
 
     def parse_text(self, text: str, origin: str) -> None:
-        front = _front_matter(text, self.md_config)
+        front = read_front_matter(text)
         spec = front.get(SYSTEM_PREFIX_KEY)
         if spec is None:
             self.default_ns = self.prefixes.default
@@ -242,15 +231,7 @@ class _Parser:
                 f"{where}: placeholder {value!r} can only stand for an object a "
                 "process consumes or produces"
             )
-        return self._record(
-            self.prefixes.split(value, default=self.default_ns, context=where)
-        )
-
-    def _record(self, name: Name) -> str:
-        """Note the local name `name` was written with; return its identifier."""
-        if name.local is not None:
-            self.system.local_names.setdefault(name.identifier, set()).add(name.local)
-        return name.identifier
+        return self.prefixes.expand(value, default=self.default_ns, context=where)
 
     def _walk(self, text: str, origin: str, line_offset: int) -> None:
         for name, argument, token in _directive_fences(text, self.md_config):
@@ -322,7 +303,7 @@ class _Parser:
         if is_placeholder(argument):
             raise ValueError(f"{where}: a placeholder ({argument!r}) cannot be defined")
         declared = self.prefixes.split(argument, default=self.default_ns, context=where)
-        key = self._record(declared)
+        key = declared.identifier
         stack = self.stacks[name]
         parent_option = "parent" if is_process else "parent_object"
         parent_raw = parsed.options.get(parent_option)

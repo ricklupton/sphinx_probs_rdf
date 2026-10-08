@@ -15,7 +15,7 @@ written.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .units import UnitTable
 
@@ -191,11 +191,6 @@ class ParsedSystem:
     #: namespace), or ``None`` if they are opaque. See
     #: :mod:`sphinx_probs_rdf.identifiers`.
     prefixes: Optional[Dict[str, str]] = None
-    #: Every identifier written anywhere -- defined or only referred to, like a group
-    #: parent that is never declared -- and the local names it was written with. A
-    #: definition's own ``local_name`` is authoritative; this is how an identifier
-    #: that is never defined still has a name in a linked model.
-    local_names: Dict[str, Set[str]] = field(default_factory=dict)
 
     def placeholders(self) -> Dict[str, List[str]]:
         """Each process with open placeholders, and its placeholders."""
