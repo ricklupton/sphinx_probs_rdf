@@ -7,19 +7,21 @@ Unreleased
 
 New features:
 
-- The standalone loader takes a prefix table (``prefixes=``). Without one, identifiers are used exactly as written, as before; with one, every system identifier is expanded as the Sphinx path expands it.
+- The standalone loader takes a prefix table (``prefixes=``), and expands every system identifier as the Sphinx path expands it.
 
-- A file's front matter can set the namespace of its bare names (``system_prefix: name`` or ``<iri>``), on both the loader and the Sphinx path. An included file keeps its own.
+- A ``system:prefix`` directive sets the namespace of the bare names that follow it in a document (``name``, ``name:`` or ``<iri>``; ``:`` restores the default), on both the loader and the Sphinx path, like ``py:currentmodule``.
 
 - Placeholders (``_:label``): an object a process refers to without naming it. A blank node in RDF output, one per label per process.
 
-- Every definition records the namespace it was declared in (``ObjectDef.namespace``/``ProcessDef.namespace``), emitted as ``rdfs:isDefinedBy``, and its local name.
+- Every definition records the namespace it was declared in (``ObjectDef.namespace``/``ProcessDef.namespace``), emitted as ``rdfs:isDefinedBy``.
 
-- New ``link_model`` with ``ProcessSelection``, ``RecipeSubstitution`` and ``ObjectOverride``: pick one model out of a library of definitions, wire its placeholders, and flatten it to local names.
+- New ``link_model``: pick one model out of a library of definitions with a list of ``ProcessSelection`` (a scope, and an optional remapping of the objects its processes refer to, which fills placeholders), override object fields with ``object_overrides``, and give everything its local name -- or its prefixed name where two would clash, or one chosen with ``local_names``.
 
 - A prefixed or full cross-reference target (``{system:ref}`frag:Cast```) now names exactly one definition.
 
 BREAKING CHANGES:
+
+- The standalone loader no longer keeps a prefixed name as written when it has no prefix table: without one, ``prefix:Name`` is an error (an unknown prefix), and ``:Name`` means ``Name``.
 
 - Defining the same identifier twice is an error in the loader (it was a warning, and the later definition replaced the earlier one).
 
@@ -27,7 +29,7 @@ BREAKING CHANGES:
 
 Fixes:
 
-- A bare ``:basis:`` value with no ``probs_rdf_basis_prefix`` uses the project's system prefix, never a file's own namespace.
+- A bare ``:basis:`` value with no ``probs_rdf_basis_prefix`` uses the project's system prefix, never one set by ``system:prefix``.
 
 - One-way trade (``traded: import`` or ``traded: export``) is no longer logged as an error. The RDF records it as ``probs:objectIsTraded true``, since PRObs has one flag for trade; the loader keeps the (import, export) pair.
 

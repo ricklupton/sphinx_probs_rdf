@@ -26,7 +26,7 @@ def validate(system: ParsedSystem) -> List[str]:
     for process in system.processes.values():
         for item in process.consumes + process.produces:
             if is_placeholder(item.object_name):
-                # Open by design: filled when a model is linked (see open_references).
+                # Open by design: filled when a model is linked.
                 continue
             if item.object_name not in system.objects:
                 problems.append(
@@ -104,17 +104,3 @@ def validate(system: ParsedSystem) -> List[str]:
                 )
 
     return problems
-
-
-def open_references(system: ParsedSystem) -> List[str]:
-    """Each placeholder left open, as ``"process: _:label"`` -- one line per hole.
-
-    Not problems in a library of definitions: they are the points a model is wired at
-    when it is linked, and :func:`sphinx_probs_rdf.linking.link_model` refuses to leave
-    any open.
-    """
-    return [
-        f"{process}: {label}"
-        for process, labels in system.placeholders().items()
-        for label in labels
-    ]

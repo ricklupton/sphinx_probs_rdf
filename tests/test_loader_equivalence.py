@@ -10,7 +10,7 @@ import pytest
 from rdflib import Graph, Namespace, URIRef
 from rdflib.namespace import RDF
 
-from sphinx_probs_rdf.directives import PROBS, PROBS_RECIPE, parse_uri
+from sphinx_probs_rdf.directives import PROBS, PROBS_RECIPE, config_prefixes
 from sphinx_probs_rdf.loader import parse_system_definitions
 from sphinx_probs_rdf.units import DEFAULT_UNITS
 
@@ -38,13 +38,21 @@ def _rdf_recipe_items(g: Graph, process_uri: URIRef, relation) -> Set[Tuple[URIR
     return items
 
 
-def _assert_equivalent(system, graph: Graph, config) -> None:
+def _parse(app):
+    """The loader's reading of the test root, with the project's prefix table."""
+    return parse_system_definitions(
+        [app.srcdir / "index.md"],
+        units=DEFAULT_UNITS,
+        validate=False,
+        prefixes=config_prefixes(app.config).table,
+    )
+
+
+def _assert_equivalent(system, graph: Graph) -> None:
     units = DEFAULT_UNITS
+    uri = URIRef
 
-    def uri(name: str) -> URIRef:
-        return parse_uri(config, name)
-
-    # Objects: same set of names, mapped through the same parse_uri the RDF path uses.
+    # Objects: the same identifiers.
     rdf_objects = {s for s in graph.subjects(RDF.type, PROBS.Object)}
     assert rdf_objects == {uri(name) for name in system.objects}
 
@@ -95,10 +103,7 @@ def test_loader_matches_rdf_myst(app, status, warning):
     graph = Graph()
     graph.parse(app.outdir / "output.ttl", format="ttl")
 
-    system = parse_system_definitions(
-        [app.srcdir / "index.md"], units=DEFAULT_UNITS, validate=False
-    )
-    _assert_equivalent(system, graph, app.config)
+    _assert_equivalent(_parse(app), graph)
 
 
 @pytest.mark.sphinx(
@@ -113,10 +118,7 @@ def test_loader_matches_rdf_myst_mixed_units(app, status, warning):
     graph = Graph()
     graph.parse(app.outdir / "output.ttl", format="ttl")
 
-    system = parse_system_definitions(
-        [app.srcdir / "index.md"], units=DEFAULT_UNITS, validate=False
-    )
-    _assert_equivalent(system, graph, app.config)
+    _assert_equivalent(_parse(app), graph)
 
 
 @pytest.mark.sphinx(
@@ -134,7 +136,4 @@ def test_loader_matches_rdf_prefixes(app, status, warning):
     graph = Graph()
     graph.parse(app.outdir / "output.ttl", format="ttl")
 
-    system = parse_system_definitions(
-        [app.srcdir / "index.md"], units=DEFAULT_UNITS, validate=False
-    )
-    _assert_equivalent(system, graph, app.config)
+    _assert_equivalent(_parse(app), graph)

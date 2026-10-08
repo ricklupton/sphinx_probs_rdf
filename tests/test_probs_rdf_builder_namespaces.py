@@ -1,4 +1,4 @@
-"""Per-file namespaces, placeholders and ``rdfs:isDefinedBy`` on the Sphinx path, and
+"""``system:prefix``, placeholders and ``rdfs:isDefinedBy`` on the Sphinx path, and
 that the standalone loader reads the same files to the same identifiers."""
 
 import re
@@ -26,13 +26,15 @@ def _graph(app) -> Graph:
 
 
 @pytest.mark.sphinx("probs_rdf", testroot="namespaces", confoverrides=CONF)
-def test_an_included_fragment_keeps_its_own_namespace(app, status, warning):
+def test_an_included_fragment_sets_its_own_namespace(app, status, warning):
     g = _graph(app)
     assert warning.getvalue().strip() == ""
     assert (FRAG.Slab, RDF.type, PROBS.Object) in g
     assert (FRAG.Cast, PROBS.consumes, SYS.Steel) in g
     assert (FRAG.Cast, PROBS.produces, FRAG.Slab) in g
-    # Back in the including page, bare names are the project's again.
+    # Bare names before the include, and after the page restores the default, are
+    # the project's.
+    assert (SYS.Sheet, RDF.type, PROBS.Object) in g
     assert (SYS.AfterTheInclude, RDF.type, PROBS.Object) in g
     assert (SYS.Cast, RDF.type, PROBS.Process) in g
 
@@ -60,7 +62,7 @@ def test_a_placeholder_is_shown_by_its_label(app, status, warning):
 
 
 @pytest.mark.sphinx("probs_rdf", testroot="namespaces", confoverrides=CONF)
-def test_a_basis_never_takes_a_file_s_namespace(app, status, warning):
+def test_a_basis_never_takes_the_system_prefix_namespace(app, status, warning):
     g = _graph(app)
     assert (FRAG.Slab, PROBS.objectMetric, SYS.mass) in g
 

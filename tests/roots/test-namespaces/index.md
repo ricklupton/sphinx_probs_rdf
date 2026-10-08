@@ -36,6 +36,11 @@ A process with the same local name as the fragment's.
 ```{include} _fragments/casting.md
 ```
 
+The fragment set its own namespace for bare names; this page goes back to the default.
+
+```{system:prefix} :
+```
+
 ```{system:object} AfterTheInclude
 ---
 basis: mass

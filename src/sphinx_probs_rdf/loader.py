@@ -1,10 +1,10 @@
 """Parse ``system:process`` / ``system:object`` / ``system:parameter`` MyST directive
 fences directly into a :class:`sphinx_probs_rdf.model.ParsedSystem`.
 
-Identifiers are plain strings. Without a prefix table (``prefixes=None``, the default)
-they are exactly as written; with one, every system identifier is expanded the way the
-Sphinx/RDF path expands it, and a file's front matter can set the namespace its bare
-names belong to (``system_prefix:``). See :mod:`sphinx_probs_rdf.identifiers`.
+Identifiers are plain strings, expanded with a prefix table the way the Sphinx/RDF path
+expands them; without one, a bare name is its own identifier. A ``system:prefix``
+directive sets the namespace of the bare names that follow it in the same file. See
+:mod:`sphinx_probs_rdf.identifiers`.
 
 Security
 --------
@@ -30,12 +30,7 @@ from myst_parser.parsers.directives import parse_directive_text
 from myst_parser.parsers.mdit import create_md_parser
 
 from . import grammar
-from .identifiers import (
-    SYSTEM_PREFIX_KEY,
-    Prefixes,
-    is_placeholder,
-    read_front_matter,
-)
+from .identifiers import Prefixes, is_placeholder
 from .model import (
     FactorSpec,
     ObjectDef,
@@ -54,6 +49,7 @@ log = logging.getLogger(__name__)
 PROCESS_DIRECTIVE = "system:process"
 OBJECT_DIRECTIVE = "system:object"
 PARAMETER_DIRECTIVE = "system:parameter"
+PREFIX_DIRECTIVE = "system:prefix"
 END_SUB_PROCESSES = "end-sub-processes"
 END_SUB_OBJECTS = "end-sub-objects"
 
@@ -214,24 +210,27 @@ class _Parser:
         self.parse_text(path.read_text(), origin=path.name)
 
     def parse_text(self, text: str, origin: str) -> None:
-        front = read_front_matter(text)
-        spec = front.get(SYSTEM_PREFIX_KEY)
-        if spec is None:
-            self.default_ns = self.prefixes.default
-        else:
-            self.default_ns = self.prefixes.namespace(
-                str(spec), context=f"{origin} front matter {SYSTEM_PREFIX_KEY!r}"
-            )
+        # As Sphinx's ref_context, which holds the current prefix, is per document.
+        self.default_ns = self.prefixes.default
         self._walk(text, origin=origin, line_offset=0)
 
-    def _expand(self, value: str, where: str, *, placeholder_ok: bool = False) -> str:
-        """`value`'s identifier, read with this file's default namespace."""
+    def _expand(
+        self,
+        value: str,
+        where: str,
+        *,
+        placeholder_ok: bool = False,
+        default_local: Optional[str] = None,
+    ) -> str:
+        """`value`'s identifier, read with the current namespace for bare names."""
         if is_placeholder(value.strip()) and not placeholder_ok:
             raise ValueError(
                 f"{where}: placeholder {value!r} can only stand for an object a "
                 "process consumes or produces"
             )
-        return self.prefixes.expand(value, default=self.default_ns, context=where)
+        return self.prefixes.expand(
+            value, default=self.default_ns, default_local=default_local, context=where
+        )
 
     def _walk(self, text: str, origin: str, line_offset: int) -> None:
         for name, argument, token in _directive_fences(text, self.md_config):
@@ -246,6 +245,10 @@ class _Parser:
                     self.stacks[kind].pop()
                 else:
                     log.warning("%s: %s with nothing to end", where, name)
+                continue
+
+            if name == PREFIX_DIRECTIVE:
+                self.default_ns = self.prefixes.namespace(argument, context=where)
                 continue
 
             if name == PARAMETER_DIRECTIVE:
@@ -302,8 +305,9 @@ class _Parser:
 
         if is_placeholder(argument):
             raise ValueError(f"{where}: a placeholder ({argument!r}) cannot be defined")
-        declared = self.prefixes.split(argument, default=self.default_ns, context=where)
-        key = declared.identifier
+        key, namespace = self.prefixes.split(
+            argument, default=self.default_ns, context=where
+        )
         stack = self.stacks[name]
         parent_option = "parent" if is_process else "parent_object"
         parent_raw = parsed.options.get(parent_option)
@@ -345,8 +349,7 @@ class _Parser:
                 per=self._per(parsed.options.get("per"), where),
                 balance=parsed.options.get("balance"),
                 extra=parsed.options.get("extra") or {},
-                namespace=declared.namespace,
-                local_name=declared.local,
+                namespace=namespace,
             )
         else:
             registry = self.system.objects
@@ -358,15 +361,21 @@ class _Parser:
                 composed_of_children_of=composed_of_children_of,
                 source=where,
                 traded=parsed.options.get("traded"),
+                # ``prefix:`` alone means this object's own name in that namespace.
                 equivalent_to=[
-                    self._equivalent(e, declared.local, where)
+                    self._expand(
+                        e,
+                        where,
+                        default_local=(
+                            key[len(namespace):] if namespace is not None else None
+                        ),
+                    )
                     for e in parsed.options.get("equivalent", [])
                 ],
                 basis=parsed.options.get("basis"),
                 factors=_factor_specs(parsed.options.get("factors", {}), where),
                 extra=parsed.options.get("extra") or {},
-                namespace=declared.namespace,
-                local_name=declared.local,
+                namespace=namespace,
             )
 
         if key in registry:
@@ -395,18 +404,6 @@ class _Parser:
             return {**per, "object": self._expand(per["object"], where,
                                                   placeholder_ok=True)}
         return per
-
-    def _equivalent(self, value: str, local: Optional[str], where: str) -> str:
-        """An ``:equivalent:`` entry; ``prefix:`` alone means this object's own name
-        in that namespace, as on the Sphinx path."""
-        if (
-            not self.prefixes.opaque
-            and value.endswith(":")
-            and local is not None
-            and not value.startswith("<")
-        ):
-            value = value + local
-        return self._expand(value, where)
 
     def finish(self) -> ParsedSystem:
         for kind, stack in self.stacks.items():
@@ -483,9 +480,10 @@ def parse_system_definitions(
 
     `prefixes` is the prefix table (``{"": default namespace, name: namespace, ...}``),
     the counterpart of ``probs_rdf_system_prefix`` and ``probs_rdf_extra_prefixes`` on
-    the Sphinx path. Without one, identifiers are used exactly as written. A file whose
-    front matter sets ``system_prefix: name`` (or ``<iri>``) puts its bare names in that
-    namespace instead of the default one. The same identifier defined twice is an error.
+    the Sphinx path. Without one, a bare name is its own identifier, and a prefixed one
+    is an error. A ``system:prefix`` directive (``prefix``, ``prefix:`` or ``<iri>``)
+    puts the bare names that follow it in its file in that namespace; ``:`` restores
+    the default. The same identifier defined twice is an error.
 
     Every object's basis is resolved, raising a ValueError on inconsistencies.
 

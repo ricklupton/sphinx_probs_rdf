@@ -2,67 +2,96 @@
 
 A parsed system can hold more than one model's worth of definitions -- a shared core and
 several alternative readings of some part of it, each in a namespace of its own. Linking
-picks one model out of that library, wires it, and flattens it to local names:
+picks one model out of that library, wires it, and gives everything a short name::
 
-* :class:`ProcessSelection` -- which processes the model contains. **Objects are not
-  selected**: a model contains exactly the objects its processes refer to (recipe items
-  and ``per`` objects), with their declared parents.
-* :class:`RecipeSubstitution` -- "in these processes, where the recipe says X, use Y".
-  This is how a placeholder (``_:label``) is filled, and how a reference is rewired
-  without touching either definition.
-* :class:`ObjectOverride` -- an object's trade flags, changed for this model.
+    link_model(
+        library,
+        [
+            ProcessSelection("us:", {"_:HotBand": "alloc:HotBandForSale"}),
+            ProcessSelection("alloc:"),
+        ],
+        object_overrides={"us:HotBand": {"traded": (True, False)}},
+    )
 
-The result is an ordinary :class:`~sphinx_probs_rdf.model.ParsedSystem` whose
-identifiers are the definitions' **local names**, so a consumer that knows nothing of
-prefixes or IRIs can use it as it is.
+* Each :class:`ProcessSelection` selects processes, and can remap the objects their
+  recipes refer to: "in these processes, where the recipe says X, use Y". This is how a
+  placeholder (``_:label``) is filled, and how a reference is rewired without touching
+  either definition. **Objects are not selected**: a model contains exactly the objects
+  its processes refer to (recipe items and ``per`` objects), with their declared
+  ancestors.
+* ``object_overrides`` changes fields of an object (e.g. ``traded``) for this model.
+* ``local_names`` names definitions in the linked model; the rest are named by the rule
+  below.
+
+The result is an ordinary :class:`~sphinx_probs_rdf.model.ParsedSystem`, so a consumer
+that knows nothing of prefixes or IRIs can use it as it is.
 
 Scopes
 ------
 
-A selection or substitution applies to a *scope* of processes:
+A selection's scope is ``ALL`` (every process), or a string or list of strings, each of
+which is either
 
-``ALL``
-    every process (for a substitution: every selected process);
-``"prefix:"`` or ``"<namespace iri>"`` -- a string
-    every process **declared in** that namespace. Membership is the namespace each
-    definition was declared with (``ProcessDef.namespace``, ``rdfs:isDefinedBy`` in
-    RDF), compared exactly. It is never inferred from the IRI, so namespaces may nest
-    freely: a process declared in ``…/us/mill-feed/`` is not in ``…/us/``;
-``["prefix:Name", "<iri>", ...]`` -- a list
-    exactly those processes.
+``"prefix:"``
+    every process **declared in** that namespace (``ProcessDef.namespace``,
+    ``rdfs:isDefinedBy`` in RDF), compared exactly. It is never inferred from the IRI,
+    so namespaces may nest freely: a process declared in ``…/us/mill-feed/`` is not in
+    ``…/us/``; or
+``"prefix:Name"``, ``"Name"`` or ``"<iri>"``
+    that one process.
 
-A single string is always a namespace; name one process by passing a one-element list.
+A process in several selections takes the remapping of each, so a remapping can be
+scoped to one process::
 
-Everything ambiguous is an error rather than a rule to learn: a substitution that
-matches nothing, two substitutions for one placeholder in one process, a placeholder
-left open, an object referred to but never defined, two definitions with one local name.
+    [ProcessSelection("us:Sale", {...}), ProcessSelection("us:")]
+
+Names in the linked model
+-------------------------
+
+A definition is called by its local name -- its identifier less the namespace it was
+declared in -- unless another of its kind would be called the same, when it is called
+by its prefixed name (``rec:HotStripMill``, or ``<iri>`` if no prefix fits). A parent
+that is never declared is kept, and named the same way.
+
+Errors
+------
+
+A scope that names nothing; a remapping that matches nothing in its scope, or maps one
+reference in one process to two different objects; a placeholder left open; a reference
+to an object never defined; an override or a local name for something not in the model;
+two definitions given the same local name.
 """
 
 from __future__ import annotations
 
+import enum
+from collections import Counter
 from dataclasses import dataclass, field, replace
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Union,
+)
 
-from .identifiers import Prefixes, is_placeholder
-from .model import ObjectDef, ParsedSystem, ProcessDef, RecipeItem
+from .identifiers import Prefixes
+from .model import ObjectDef, ParsedSystem, ProcessDef
 
 
-class _All:
-    """Every process."""
-
-    _instance: Optional["_All"] = None
-
-    def __new__(cls) -> "_All":
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+class _All(enum.Enum):
+    ALL = "ALL"
 
     def __repr__(self) -> str:
         return "ALL"
 
 
 #: The scope of every process.
-ALL = _All()
+ALL = _All.ALL
 
 Scope = Union[_All, str, Sequence[str]]
 
@@ -73,15 +102,9 @@ class LinkError(ValueError):
 
 @dataclass(frozen=True)
 class ProcessSelection:
-    """Include the processes in `scope` (see the module docstring)."""
-
-    scope: Scope
-
-
-@dataclass(frozen=True)
-class RecipeSubstitution:
-    """In the selected processes in `scope`, replace each key of `replacements` with its
-    value wherever a recipe item or a ``per`` object refers to it.
+    """Include the processes in `scope` (see the module docstring), and in them replace
+    each key of `remap` with its value wherever a recipe item or a ``per`` object refers
+    to it.
 
     Keys are placeholders (``"_:HotBand"``) or ordinary identifiers; values are
     identifiers of objects the model will contain. A key must occur in at least one
@@ -89,52 +112,59 @@ class RecipeSubstitution:
     """
 
     scope: Scope
-    replacements: Mapping[str, str] = field(default_factory=dict)
+    remap: Mapping[str, str] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class ObjectOverride:
-    """Change an object's trade flags for this model.
+def link_model(
+    parsed: ParsedSystem,
+    selections: Iterable[ProcessSelection],
+    *,
+    object_overrides: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    local_names: Optional[Mapping[str, str]] = None,
+) -> ParsedSystem:
+    """Link one model from `parsed`: select and remap, override, then name.
 
-    ``None`` leaves a flag as declared.
-    """
+    `object_overrides` maps an object to the :class:`~sphinx_probs_rdf.model.ObjectDef`
+    fields to change, e.g. ``{"us:HotBand": {"traded": (True, False)}}``. `local_names`
+    maps an object or process to its name in the linked model.
 
-    object: str
-    can_import: Optional[bool] = None
-    can_export: Optional[bool] = None
-
-
-Part = Union[ProcessSelection, RecipeSubstitution, ObjectOverride]
-
-
-def link_model(parsed: ParsedSystem, parts: Iterable[Part]) -> ParsedSystem:
-    """Link one model from `parsed`: select, substitute, override, then localise.
-
-    `parts` is a flat sequence of :class:`ProcessSelection`, :class:`RecipeSubstitution`
-    and :class:`ObjectOverride`, in any order -- typically a concatenation of lists, one
-    per alternative a model uses, so that each alternative carries its own wiring.
     Definition order is kept: processes and objects appear in the order they were
     parsed.
     """
     prefixes = Prefixes(parsed.prefixes)
-    parts = list(parts)
-    selections = [p for p in parts if isinstance(p, ProcessSelection)]
-    substitutions = [p for p in parts if isinstance(p, RecipeSubstitution)]
-    overrides = [p for p in parts if isinstance(p, ObjectOverride)]
-    for part in parts:
-        if not isinstance(part, (ProcessSelection, RecipeSubstitution, ObjectOverride)):
-            raise TypeError(f"not a part of a model: {part!r}")
-    if not selections:
-        raise LinkError("a model needs at least one ProcessSelection")
 
-    selected: Set[str] = set()
+    def expand(value: str) -> str:
+        try:
+            return prefixes.expand(value)
+        except ValueError as err:
+            raise LinkError(str(err)) from None
+
+    remaps: Dict[str, Dict[str, str]] = {}
     for selection in selections:
-        selected |= _scope(selection.scope, parsed, prefixes, "ProcessSelection")
+        in_scope = _scope(selection.scope, parsed, prefixes, expand)
+        for name in in_scope:
+            remaps.setdefault(name, {})
+        for raw_old, raw_new in selection.remap.items():
+            old, new = expand(raw_old), expand(raw_new)
+            hits = [n for n in in_scope if old in parsed.processes[n].references()]
+            if not hits:
+                raise LinkError(
+                    f"ProcessSelection {selection.scope!r}: no process in scope "
+                    f"refers to {raw_old!r}"
+                )
+            for name in hits:
+                if remaps[name].get(old, new) != new:
+                    raise LinkError(
+                        f"{raw_old!r} in {prefixes.compact(name)} is remapped to both "
+                        f"{prefixes.compact(remaps[name][old])} and "
+                        f"{prefixes.compact(new)}"
+                    )
+                remaps[name][old] = new
     processes = {
-        name: proc for name, proc in parsed.processes.items() if name in selected
+        name: _rename(proc, remaps[name])
+        for name, proc in parsed.processes.items()
+        if name in remaps
     }
-
-    processes = _substitute(processes, substitutions, parsed, prefixes)
 
     still_open = [
         f"{prefixes.compact(name)}: {label}"
@@ -143,137 +173,128 @@ def link_model(parsed: ParsedSystem, parts: Iterable[Part]) -> ParsedSystem:
     ]
     if still_open:
         raise LinkError(
-            "placeholders left open (fill each with a RecipeSubstitution): "
+            "placeholders left open (fill each with a ProcessSelection remap): "
             + "; ".join(still_open)
         )
 
     objects = _objects_referred_to(processes, parsed, prefixes)
-    objects = _override(objects, overrides, prefixes)
-    return _localise(processes, objects, parsed, prefixes)
+    for raw, fields in (object_overrides or {}).items():
+        name = expand(raw)
+        if name not in objects:
+            raise LinkError(f"object_overrides: {raw!r} is not an object of this model")
+        objects[name] = replace(objects[name], **fields)
+
+    explicit = {expand(k): v for k, v in (local_names or {}).items()}
+    object_names = _names(
+        [*objects, *(o.parent for o in objects.values() if o.parent is not None)],
+        parsed.objects,
+        explicit,
+        prefixes,
+        "object",
+    )
+    process_names = _names(
+        [*processes, *(p.parent for p in processes.values() if p.parent is not None)],
+        parsed.processes,
+        explicit,
+        prefixes,
+        "process",
+    )
+    unused = set(explicit) - set(object_names) - set(process_names)
+    if unused:
+        raise LinkError(
+            "local_names: not in this model: "
+            + ", ".join(sorted(prefixes.compact(n) for n in unused))
+        )
+
+    def parent(name: Optional[str], names: Dict[str, str]) -> Optional[str]:
+        return names[name] if name is not None else None
+
+    def in_model(
+        members: List[str], names: Dict[str, str], model: Mapping
+    ) -> List[str]:
+        """The hierarchy links that stay inside the model, renamed."""
+        return [names[n] for n in members if n in model]
+
+    return ParsedSystem(
+        objects={
+            object_names[name]: replace(
+                obj,
+                name=object_names[name],
+                parent=parent(obj.parent, object_names),
+                composed_of=in_model(obj.composed_of, object_names, objects),
+                composed_of_children_of=in_model(
+                    obj.composed_of_children_of, object_names, objects
+                ),
+            )
+            for name, obj in objects.items()
+        },
+        processes={
+            process_names[name]: replace(
+                _rename(proc, object_names),
+                name=process_names[name],
+                parent=parent(proc.parent, process_names),
+                composed_of=in_model(proc.composed_of, process_names, processes),
+                composed_of_children_of=in_model(
+                    proc.composed_of_children_of, process_names, processes
+                ),
+            )
+            for name, proc in processes.items()
+        },
+        parameters=dict(parsed.parameters),
+        units=parsed.units,
+        prefixes=None,
+    )
 
 
-def _scope(
-    scope: Scope, parsed: ParsedSystem, prefixes: Prefixes, what: str
-) -> Set[str]:
+def _scope(scope: Scope, parsed: ParsedSystem, prefixes: Prefixes, expand) -> Set[str]:
     """The processes `scope` names, as identifiers."""
     if scope is ALL:
         return set(parsed.processes)
-    if isinstance(scope, str):
-        if not (scope.endswith(":") or (scope.startswith("<") and scope.endswith(">"))):
-            raise LinkError(
-                f"{what} scope {scope!r}: a string names a namespace, written "
-                f"'prefix:' or '<iri>'; pass a list to name processes"
-            )
-        namespace = _namespace(scope, prefixes, what)
-        found = {n for n, p in parsed.processes.items() if p.namespace == namespace}
-        if not found:
-            raise LinkError(
-                f"{what} scope {scope!r}: no process is declared in namespace "
-                f"<{namespace}>" + _near_miss(namespace, parsed)
-            )
-        return found
-    names: Set[str] = set()
     assert not isinstance(scope, _All)
-    for item in scope:
-        identifier = _identifier(item, prefixes, what)
-        if identifier not in parsed.processes:
-            raise LinkError(f"{what} scope: no process {item!r} is defined")
-        names.add(identifier)
-    if not names:
-        raise LinkError(f"{what} scope is empty")
-    return names
-
-
-def _namespace(spec: str, prefixes: Prefixes, what: str) -> str:
-    try:
-        return prefixes.namespace(spec, context=what)
-    except ValueError as err:
-        raise LinkError(str(err)) from None
-
-
-def _identifier(value: str, prefixes: Prefixes, what: str) -> str:
-    try:
-        return prefixes.expand(value, context=what)
-    except ValueError as err:
-        raise LinkError(str(err)) from None
-
-
-def _near_miss(namespace: str, parsed: ParsedSystem) -> str:
-    """A hint when `namespace` differs from a real one only by its trailing
-    separator."""
-    stem = namespace.rstrip("/#")
-    for ns in {p.namespace for p in parsed.processes.values() if p.namespace}:
-        if ns != namespace and ns.rstrip("/#") == stem:
-            return f"; did you mean <{ns}>?"
-    return ""
-
-
-def _substitute(
-    processes: Dict[str, ProcessDef],
-    substitutions: List[RecipeSubstitution],
-    parsed: ParsedSystem,
-    prefixes: Prefixes,
-) -> Dict[str, ProcessDef]:
-    """Apply every substitution, refusing overlaps and substitutions that match
-    nothing."""
-    plan: Dict[str, Dict[str, str]] = {name: {} for name in processes}
-    origin: Dict[Tuple[str, str], int] = {}
-    for index, sub in enumerate(substitutions):
-        in_scope = _scope(sub.scope, parsed, prefixes, "RecipeSubstitution")
-        outside = in_scope - set(processes)
-        if outside and sub.scope is not ALL and not isinstance(sub.scope, str):
-            raise LinkError(
-                "RecipeSubstitution scope names processes the model does not select: "
-                + ", ".join(sorted(prefixes.compact(n) for n in outside))
-            )
-        targets = [n for n in processes if n in in_scope]
-        if not sub.replacements:
-            raise LinkError(f"RecipeSubstitution {sub.scope!r} replaces nothing")
-        for raw_from, raw_to in sub.replacements.items():
-            old = _identifier(raw_from, prefixes, "RecipeSubstitution")
-            new = _identifier(raw_to, prefixes, "RecipeSubstitution")
-            if is_placeholder(new):
+    found: Set[str] = set()
+    for entry in [scope] if isinstance(scope, str) else scope:
+        if entry.endswith(":") and not entry.startswith("<"):
+            try:
+                namespace = prefixes.namespace(entry)
+            except ValueError as err:
+                raise LinkError(str(err)) from None
+            members = {
+                n for n, p in parsed.processes.items() if p.namespace == namespace
+            }
+            if not members:
                 raise LinkError(
-                    f"RecipeSubstitution: {raw_from!r} cannot be replaced by another "
-                    f"placeholder ({raw_to!r})"
+                    f"scope {entry!r}: no process is declared in namespace "
+                    f"<{namespace}>"
                 )
-            hits = [n for n in targets if old in processes[n].references()]
-            if not hits:
-                raise LinkError(
-                    f"RecipeSubstitution {sub.scope!r}: no selected process in scope "
-                    f"refers to {raw_from!r}"
-                )
-            for name in hits:
-                if (name, old) in origin:
-                    raise LinkError(
-                        f"two RecipeSubstitutions replace {raw_from!r} in "
-                        f"{prefixes.compact(name)}: give their scopes no overlap"
-                    )
-                origin[(name, old)] = index
-                plan[name][old] = new
+            found |= members
+        else:
+            identifier = expand(entry)
+            if identifier not in parsed.processes:
+                raise LinkError(f"scope: no process {entry!r} is defined")
+            found.add(identifier)
+    return found
 
-    def apply(items: List[RecipeItem], mapping: Dict[str, str]) -> List[RecipeItem]:
-        return [
+
+def _rename(proc: ProcessDef, mapping: Mapping[str, str]) -> ProcessDef:
+    """`proc` with each object it refers to (recipe items and ``per``) renamed by
+    `mapping`; names not in `mapping` are kept."""
+    if not mapping:
+        return proc
+    per = proc.per
+    if isinstance(per, dict) and isinstance(per.get("object"), str):
+        per = {**per, "object": mapping.get(per["object"], per["object"])}
+    return replace(
+        proc,
+        consumes=[
             replace(i, object_name=mapping.get(i.object_name, i.object_name))
-            for i in items
-        ]
-
-    result: Dict[str, ProcessDef] = {}
-    for name, proc in processes.items():
-        mapping = plan[name]
-        if not mapping:
-            result[name] = proc
-            continue
-        per = proc.per
-        if isinstance(per, dict) and per.get("object") in mapping:
-            per = {**per, "object": mapping[per["object"]]}
-        result[name] = replace(
-            proc,
-            consumes=apply(proc.consumes, mapping),
-            produces=apply(proc.produces, mapping),
-            per=per,
-        )
-    return result
+            for i in proc.consumes
+        ],
+        produces=[
+            replace(i, object_name=mapping.get(i.object_name, i.object_name))
+            for i in proc.produces
+        ],
+        per=per,
+    )
 
 
 def _objects_referred_to(
@@ -302,111 +323,39 @@ def _objects_referred_to(
     return {name: obj for name, obj in parsed.objects.items() if name in needed}
 
 
-def _override(
-    objects: Dict[str, ObjectDef], overrides: List[ObjectOverride], prefixes: Prefixes
-) -> Dict[str, ObjectDef]:
-    seen: Set[str] = set()
-    for override in overrides:
-        name = _identifier(override.object, prefixes, "ObjectOverride")
-        if name not in objects:
-            raise LinkError(
-                f"ObjectOverride: {override.object!r} is not an object of this model"
-            )
-        if name in seen:
-            raise LinkError(f"two ObjectOverrides for {override.object!r}")
-        seen.add(name)
-        can_import, can_export = objects[name].traded or (False, False)
-        if override.can_import is not None:
-            can_import = override.can_import
-        if override.can_export is not None:
-            can_export = override.can_export
-        objects[name] = replace(objects[name], traded=(can_import, can_export))
-    return objects
-
-
-def _localise(
-    processes: Dict[str, ProcessDef],
-    objects: Dict[str, ObjectDef],
-    parsed: ParsedSystem,
+def _names(
+    identifiers: List[str],
+    definitions: Mapping[str, Union[ObjectDef, ProcessDef]],
+    explicit: Mapping[str, str],
     prefixes: Prefixes,
-) -> ParsedSystem:
-    """Rename every identifier in the model to its local name."""
-    local: Dict[str, str] = {}
-    for kind, definitions in (("object", objects), ("process", processes)):
-        owners: Dict[str, str] = {}
-        for identifier, definition in definitions.items():
-            name = definition.local_name
-            if name is None:
-                raise LinkError(
-                    f"{kind} <{identifier}> was declared as a full IRI and has no "
-                    "local name to link under; declare it with a prefix"
-                )
-            if name in owners:
-                raise LinkError(
-                    f"two {kind}s would both be called {name!r} in the linked "
-                    f"model: {prefixes.compact(owners[name])} and "
-                    f"{prefixes.compact(identifier)}"
-                )
-            owners[name] = identifier
-            local[identifier] = name
+    kind: str,
+) -> Dict[str, str]:
+    """The name of each of `identifiers` in the linked model (see the module
+    docstring)."""
 
-    def rename_items(items: List[RecipeItem]) -> List[RecipeItem]:
-        return [replace(i, object_name=local[i.object_name]) for i in items]
+    def local(identifier: str) -> str:
+        definition = definitions.get(identifier)
+        if definition is not None and definition.namespace is not None:
+            return identifier[len(definition.namespace):]
+        # Never declared, or declared as a full IRI: there is no recorded namespace,
+        # so the name goes by its prefixed spelling.
+        compact = prefixes.compact(identifier)
+        _, colon, rest = compact.partition(":")
+        return rest if colon and not compact.startswith("<") else compact
 
-    def in_model(names: List[str]) -> List[str]:
-        """The hierarchy links that stay inside the model, renamed."""
-        return [local[n] for n in names if n in local]
-
-    linked_objects: Dict[str, ObjectDef] = {}
-    for identifier, obj in objects.items():
-        parent = obj.parent
-        if parent is not None:
-            parent = _parent_name(parent, local, prefixes, identifier)
-        linked_objects[local[identifier]] = replace(
-            obj,
-            name=local[identifier],
-            parent=parent,
-            composed_of=in_model(obj.composed_of),
-            composed_of_children_of=in_model(obj.composed_of_children_of),
+    identifiers = list(dict.fromkeys(identifiers))
+    wanted = {i: explicit.get(i) or local(i) for i in identifiers}
+    counts = Counter(wanted.values())
+    names = {
+        i: name if i in explicit or counts[name] == 1 else prefixes.compact(i)
+        for i, name in wanted.items()
+    }
+    clashes = [
+        name for name, count in Counter(names.values()).items() if count > 1
+    ]
+    if clashes:
+        raise LinkError(
+            f"two {kind}s would both be called {clashes[0]!r} in the linked model: "
+            + ", ".join(prefixes.compact(i) for i in names if names[i] == clashes[0])
         )
-    linked_processes: Dict[str, ProcessDef] = {}
-    for identifier, proc in processes.items():
-        per = proc.per
-        if isinstance(per, dict) and isinstance(per.get("object"), str):
-            per = {**per, "object": local[per["object"]]}
-        linked_processes[local[identifier]] = replace(
-            proc,
-            name=local[identifier],
-            parent=local.get(proc.parent) if proc.parent is not None else None,
-            composed_of=in_model(proc.composed_of),
-            composed_of_children_of=in_model(proc.composed_of_children_of),
-            consumes=rename_items(proc.consumes),
-            produces=rename_items(proc.produces),
-            per=per,
-        )
-    return ParsedSystem(
-        objects=linked_objects,
-        processes=linked_processes,
-        parameters=dict(parsed.parameters),
-        units=parsed.units,
-        prefixes=None,
-    )
-
-
-def _parent_name(
-    parent: str, local: Dict[str, str], prefixes: Prefixes, child: str
-) -> str:
-    """An object's parent in the linked model.
-
-    A declared parent is part of the model (it comes in with its members) and goes by
-    its local name. An undeclared one has no local name to go by, except when
-    identifiers are opaque and it is already one.
-    """
-    if parent in local:
-        return local[parent]
-    if prefixes.opaque:
-        return parent
-    raise LinkError(
-        f"object {prefixes.compact(child)} has parent {prefixes.compact(parent)}, "
-        "which is never declared; declare it as an object"
-    )
+    return names

@@ -19,12 +19,11 @@ How a reference is read
     the first colon separates the prefix, as in Turtle, so ``local`` may itself contain
     colons.
 ``:local`` or ``local``
-    The default namespace for bare names in the current file: the table's ``""`` entry,
-    unless the file's front matter sets ``system_prefix``.
+    The current namespace for bare names: the table's ``""`` entry, unless a
+    ``system:prefix`` directive earlier in the document has set another.
 
-**Opaque mode.** With no prefix table at all, nothing is expanded: every identifier is
-used exactly as written, which is what a single-namespace user wants, and what the
-loader always did before prefixes were supported. Only placeholders are recognised.
+With no prefix table the default namespace is ``""``, so a bare name is its own
+identifier.
 
 Namespaces are recorded, not inferred
 -------------------------------------
@@ -32,41 +31,13 @@ Namespaces are recorded, not inferred
 RDF has no notion of which namespace an IRI belongs to: a prefix is an abbreviation, and
 ``<http://ex.org/a/b>`` is equally ``a:b`` and ``ab:`` + ``b`` under different bindings.
 So the namespace of a *definition* is recorded when it is declared -- the namespace its
-prefix expanded to -- together with its local name (:class:`Name`), and never recovered
-from the IRI string afterwards. A definition written as a full ``<iri>`` belongs to no
-namespace.
+prefix expanded to (:meth:`Prefixes.split`) -- and never recovered from the IRI string
+afterwards. A definition written as a full ``<iri>`` belongs to no namespace.
 """
 
 from __future__ import annotations
 
-import logging
-from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional
-
-import yaml
-
-log = logging.getLogger(__name__)
-
-#: The front-matter key that sets the namespace of a file's bare names.
-SYSTEM_PREFIX_KEY = "system_prefix"
-
-
-def read_front_matter(text: str) -> Dict[str, Any]:
-    """The YAML front matter of a MyST document, or ``{}``.
-
-    Front matter is a block at the very start of the file between two ``---`` lines. The
-    loader and the Sphinx path both read it with this function, so they cannot disagree
-    about a file's ``system_prefix``.
-    """
-    lines = text.split("\n")
-    if not lines or lines[0].rstrip() != "---":
-        return {}
-    for end in range(1, len(lines)):
-        if lines[end].rstrip() in ("---", "..."):
-            data = yaml.safe_load("\n".join(lines[1:end])) or {}
-            return data if isinstance(data, dict) else {}
-    return {}
-
+from typing import Dict, Mapping, Optional, Tuple
 
 #: The pseudo-prefix of a placeholder, as for a Turtle blank node. It cannot be
 #: declared.
@@ -78,88 +49,42 @@ def is_placeholder(identifier: str) -> bool:
     return identifier.startswith(PLACEHOLDER_PREFIX + ":")
 
 
-@dataclass(frozen=True)
-class Name:
-    """An identifier as expanded, with the parts it was declared with.
-
-    ``namespace`` and ``local`` are ``None`` for a full ``<iri>``, which names no
-    namespace
-    and has no reliable local part. In opaque mode the namespace is ``""`` and the local
-    name is the identifier as written.
-    """
-
-    identifier: str
-    namespace: Optional[str]
-    local: Optional[str]
-
-
 class Prefixes:
-    """A prefix table, or none (opaque mode).
+    """A prefix table: prefix names to namespace IRIs.
 
-    ``table`` maps prefix names to namespace IRIs; its ``""`` entry is the default
-    namespace
-    for bare names. ``None`` means opaque mode: see the module docstring.
+    Its ``""`` entry is the default namespace for bare names (``""`` if not given).
     """
 
     def __init__(self, table: Optional[Mapping[str, str]] = None) -> None:
-        if table is None:
-            self._table: Optional[Dict[str, str]] = None
-            return
-        table = dict(table)
-        if PLACEHOLDER_PREFIX in table:
+        self._table: Dict[str, str] = dict(table or {})
+        if PLACEHOLDER_PREFIX in self._table:
             raise ValueError(
                 f"prefix {PLACEHOLDER_PREFIX!r} is reserved for placeholders "
                 "(_:label) and cannot be declared"
             )
-        for name, iri in table.items():
-            if not isinstance(name, str) or not isinstance(iri, str):
-                raise TypeError(
-                    f"prefix table entries must be strings: {name!r}: {iri!r}"
-                )
-            if ":" in name:
-                raise ValueError(f"prefix name {name!r} cannot contain ':'")
-            if iri and iri[-1] not in "/#":
-                log.warning(
-                    "prefix %r is bound to %r, which ends in neither '/' nor '#': "
-                    "%s:Foo would expand to %r",
-                    name, iri, name or "", iri + "Foo",
-                )
-        table.setdefault("", "")
-        self._table = table
+        self._table.setdefault("", "")
 
     @property
-    def opaque(self) -> bool:
-        """Whether there is no prefix table, so identifiers are used as written."""
-        return self._table is None
-
-    @property
-    def table(self) -> Optional[Dict[str, str]]:
-        """A copy of the prefix table, or ``None`` in opaque mode."""
-        return None if self._table is None else dict(self._table)
+    def table(self) -> Dict[str, str]:
+        """A copy of the prefix table."""
+        return dict(self._table)
 
     @property
     def default(self) -> str:
-        """The project-wide default namespace for bare names (``""`` in opaque mode)."""
-        return "" if self._table is None else self._table[""]
+        """The project-wide default namespace for bare names."""
+        return self._table[""]
 
     def namespace(self, spec: str, *, context: str = "") -> str:
         """The namespace IRI that `spec` names.
 
         `spec` is a prefix name (``"usmf-a"``), the same with a trailing colon
-        (``"usmf-a:"``), or a full ``"<iri>"``. Used for a file's ``system_prefix`` and
-        for a namespace selection when linking.
+        (``"usmf-a:"``), or a full ``"<iri>"``. ``":"`` is the default namespace.
         """
-        where = f" in {context}" if context else ""
         if spec.startswith("<") and spec.endswith(">"):
             return spec[1:-1]
         name = spec[:-1] if spec.endswith(":") else spec
-        if self._table is None:
-            if name == "":
-                return ""
-            raise ValueError(
-                f"namespace {spec!r}{where} needs a prefix table, but none was given"
-            )
         if name not in self._table:
+            where = f" in {context}" if context else ""
             raise ValueError(
                 f"unknown prefix {name!r}{where}; declared prefixes are "
                 f"{sorted(k for k in self._table if k)}"
@@ -167,13 +92,21 @@ class Prefixes:
         return self._table[name]
 
     def split(
-        self, value: str, *, default: Optional[str] = None, context: str = ""
-    ) -> Name:
-        """Expand `value`, keeping the namespace and local name it was written with.
+        self,
+        value: str,
+        *,
+        default: Optional[str] = None,
+        default_local: Optional[str] = None,
+        context: str = "",
+    ) -> Tuple[str, Optional[str]]:
+        """`value`'s identifier, and the namespace it was written in.
 
-        `default` is the namespace for bare names here (a file's ``system_prefix``); it
-        defaults to the table's ``""`` entry. Placeholders are returned unchanged, with
-        no namespace.
+        `default` is the namespace for bare names here (set by ``system:prefix``); it
+        defaults to the table's ``""`` entry. `default_local` is the local name a
+        ``prefix:`` with nothing after it stands for; without one, that is an error.
+
+        The namespace is ``None`` for a full ``<iri>`` and for a placeholder, which is
+        returned unchanged.
         """
         where = f" in {context}" if context else ""
         value = value.strip()
@@ -182,42 +115,51 @@ class Prefixes:
         if is_placeholder(value):
             if len(value) == len(PLACEHOLDER_PREFIX) + 1:
                 raise ValueError(f"placeholder {value!r}{where} has no label")
-            return Name(value, None, None)
-        if self._table is None:
-            return Name(value, "", value)
+            return value, None
         if value.startswith("<") and value.endswith(">"):
-            return Name(value[1:-1], None, None)
+            return value[1:-1], None
         prefix, colon, local = value.partition(":")
         if not colon:
             prefix, local = "", value
-        if not local:
-            raise ValueError(f"identifier {value!r}{where} has no local name")
-        if prefix == "":
-            namespace = self._table[""] if default is None else default
-        elif prefix in self._table:
-            namespace = self._table[prefix]
+        if prefix == "" and default is not None:
+            namespace = default
         else:
-            raise ValueError(
-                f"unknown prefix {prefix!r} in {value!r}{where}; declared prefixes are "
-                f"{sorted(k for k in self._table if k)}"
-            )
-        return Name(namespace + local, namespace, local)
+            namespace = self.namespace(prefix, context=f"{value!r}{where}")
+        if not local:
+            if default_local is None:
+                raise ValueError(f"identifier {value!r}{where} has no local name")
+            local = default_local
+        return namespace + local, namespace
 
     def expand(
-        self, value: str, *, default: Optional[str] = None, context: str = ""
+        self,
+        value: str,
+        *,
+        default: Optional[str] = None,
+        default_local: Optional[str] = None,
+        context: str = "",
     ) -> str:
-        """`value`'s expanded identifier. See :meth:`split`."""
-        return self.split(value, default=default, context=context).identifier
+        """`value`'s identifier. See :meth:`split`."""
+        return self.split(
+            value, default=default, default_local=default_local, context=context
+        )[0]
 
     def compact(self, identifier: str) -> str:
-        """`identifier` abbreviated with the longest matching prefix, for messages."""
-        if self._table is None or is_placeholder(identifier):
+        """`identifier` abbreviated with the longest matching prefix, preferring a
+        named prefix to the default one."""
+        if is_placeholder(identifier):
             return identifier
-        best: Optional[tuple] = None
+        best: Optional[Tuple[str, str]] = None
         for name, iri in self._table.items():
             if iri and identifier.startswith(iri) and len(identifier) > len(iri):
-                if best is None or len(iri) > len(best[1]):
+                if (
+                    best is None
+                    or len(iri) > len(best[1])
+                    or (len(iri) == len(best[1]) and best[0] == "")
+                ):
                     best = (name, iri)
-        if best is None:
-            return identifier if not self._table[""] else f"<{identifier}>"
-        return f"{best[0]}:{identifier[len(best[1]):]}"
+        if best is not None:
+            return f"{best[0]}:{identifier[len(best[1]):]}"
+        if not self._table[""] and ":" not in identifier:
+            return identifier
+        return f"<{identifier}>"

@@ -1,7 +1,4 @@
-import os
 from collections import defaultdict
-from functools import lru_cache
-from pathlib import Path
 from typing import (
     AbstractSet,
     Any,
@@ -34,12 +31,7 @@ from sphinx.util.nodes import make_refnode, find_pending_xref_condition, make_id
 from sphinx.util import logging
 
 from . import grammar
-from .identifiers import (
-    SYSTEM_PREFIX_KEY,
-    Prefixes,
-    is_placeholder,
-    read_front_matter,
-)
+from .identifiers import Prefixes, is_placeholder
 from .grammar import (  # noqa: F401 -- re-exported for backwards compatibility
     parse_yaml_value,
     parse_yaml_mapping,
@@ -56,11 +48,6 @@ from .grammar import (  # noqa: F401 -- re-exported for backwards compatibility
 logger = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=None)
-def _cached_prefixes(items: Tuple[Tuple[str, str], ...]) -> Prefixes:
-    return Prefixes(dict(items))
-
-
 def config_prefixes(config) -> Prefixes:
     """The project's prefix table: ``probs_rdf_extra_prefixes``, with
     ``probs_rdf_system_prefix`` as the default (``""``) namespace.
@@ -68,55 +55,35 @@ def config_prefixes(config) -> Prefixes:
     The standalone loader takes the same table as its ``prefixes`` argument, so that a
     document means the same identifiers on both paths.
     """
-    table = {
-        **config.probs_rdf_extra_prefixes,
-        "": config.probs_rdf_system_prefix or "",
-    }
-    return _cached_prefixes(tuple(sorted(table.items())))
-
-
-@lru_cache(maxsize=None)
-def _file_front_matter(path: str, mtime: float) -> Dict[str, Any]:
-    return read_front_matter(Path(path).read_text(encoding="utf-8"))
-
-
-def file_system_namespace(config, source: Optional[str]) -> Optional[str]:
-    """The namespace a file's front matter gives its bare names, if it sets one.
-
-    `source` is the file a directive was read from -- for content brought in with an
-    ``include`` directive, the included file, so a fragment keeps its namespace whether
-    it is a page of its own or part of another.
-    """
-    if not source or not os.path.isfile(source):
-        return None
-    front = _file_front_matter(source, os.path.getmtime(source))
-    spec = front.get(SYSTEM_PREFIX_KEY)
-    if spec is None:
-        return None
-    return config_prefixes(config).namespace(
-        str(spec), context=f"{source} front matter {SYSTEM_PREFIX_KEY!r}"
+    return Prefixes(
+        {**config.probs_rdf_extra_prefixes, "": config.probs_rdf_system_prefix or ""}
     )
 
 
-def directive_system_namespace(directive) -> Optional[str]:
-    """`file_system_namespace` for the file `directive` was written in."""
-    source, _ = directive.state_machine.get_source_and_line(directive.lineno)
-    return file_system_namespace(directive.config, source)
+def current_namespace(env) -> Optional[str]:
+    """The namespace of bare names set by the last ``system:prefix`` directive in this
+    document, if any."""
+    return env.ref_context.get("system:prefix")
 
 
-def definition_namespace(config, sig: str, system_ns: Optional[str]) -> Optional[str]:
-    """The namespace a definition written `sig` is declared in (``rdfs:isDefinedBy``).
+class SystemPrefix(SphinxDirective):
+    """``system:prefix`` -- set the namespace of the bare names that follow in this
+    document, like ``py:currentmodule``.
 
-    ``None`` for a full ``<iri>``, which names no namespace -- the loader's
-    ``ObjectDef.namespace`` follows the same rule.
+    The argument is a prefix name (``frag`` or ``frag:``) or a full ``<iri>``; ``:``
+    restores the project's default. An included file that sets it changes it for the
+    rest of the including document too.
     """
-    sig = sig.strip()
-    if sig.startswith("<") and sig.endswith(">"):
-        return None
-    prefix, colon, _ = sig.partition(":")
-    if colon and prefix:
-        return config_prefixes(config).namespace(prefix + ":")
-    return system_ns if system_ns is not None else config_prefixes(config).default
+
+    required_arguments = 1
+
+    def run(self) -> List[Node]:
+        try:
+            namespace = config_prefixes(self.config).namespace(self.arguments[0])
+        except ValueError as err:
+            raise self.error(str(err))
+        self.env.ref_context["system:prefix"] = namespace
+        return []
 
 
 class TTL(CodeBlock):
@@ -148,9 +115,7 @@ class StartSubProcessesDirective(SphinxDirective):
 
     def run(self):
         uri = parse_uri(
-            self.config,
-            self.arguments[0],
-            system_ns=directive_system_namespace(self),
+            self.config, self.arguments[0], system_ns=current_namespace(self.env)
         )
         self.env.ref_context["system:process"] = uri
         parents = self.env.ref_context.setdefault("system:processes", [])
@@ -165,9 +130,7 @@ class StartSubObjectsDirective(SphinxDirective):
 
     def run(self):
         uri = parse_uri(
-            self.config,
-            self.arguments[0],
-            system_ns=directive_system_namespace(self),
+            self.config, self.arguments[0], system_ns=current_namespace(self.env)
         )
         self.env.ref_context["system:object"] = uri
         parents = self.env.ref_context.setdefault("system:objects", [])
@@ -249,7 +212,7 @@ class ObjectEquivalentTo(SphinxDirective):
             self.options["class"] = ["admonition-object-equivalent-to"]
 
         # self.assert_has_content()
-        system_ns = directive_system_namespace(self)
+        system_ns = current_namespace(self.env)
         uri1 = parse_uri(self.config, self.arguments[0], system_ns=system_ns)
         uri2 = parse_uri(self.config, self.arguments[1], system_ns=system_ns)
 
@@ -322,15 +285,19 @@ class SystemObjectDescription(ObjectDescription):
     def define_graph(self, g, uri: str, sig: str) -> None:
         raise NotImplementedError
 
-    def system_namespace(self) -> Optional[str]:
-        """The namespace of bare names in the file this definition is written in."""
-        return directive_system_namespace(self)
+    def split(
+        self, item: str, default: Optional[str] = None
+    ) -> Tuple[URIRef, Optional[str]]:
+        """`item` as an identifier, read where this definition is written, and the
+        namespace it was written in. See `Prefixes.split`."""
+        identifier, namespace = config_prefixes(self.config).split(
+            item, default=current_namespace(self.env), default_local=default
+        )
+        return URIRef(identifier), namespace
 
     def uri(self, item: str, default: Optional[str] = None) -> URIRef:
-        """`item` as an identifier, read in this definition's file."""
-        return parse_uri(
-            self.config, item, default=default, system_ns=self.system_namespace()
-        )
+        """`item` as an identifier, read where this definition is written."""
+        return self.split(item, default)[0]
 
     def run(self) -> List[Node]:
         """Override to return admonitions rather than descs.
@@ -375,7 +342,7 @@ class SystemObjectDescription(ObjectDescription):
         """
         if is_placeholder(sig):
             raise ValueError(f"a placeholder ({sig!r}) cannot be defined")
-        uri = self.uri(sig)
+        uri, namespace = self.split(sig)
         signode["uri"] = uri
 
         # XXX is there is a better desc_XXX node for this?
@@ -389,7 +356,6 @@ class SystemObjectDescription(ObjectDescription):
         domain = cast(SystemDomain, self.env.get_domain("system"))
         g = domain.get_graph(self.env.docname)
         self.define_graph(g, uri, sig)
-        namespace = definition_namespace(self.config, sig, self.system_namespace())
         if namespace:
             g.add((uri, RDFS.isDefinedBy, URIRef(namespace)))
 
@@ -553,38 +519,23 @@ def _process_inputs_outputs(g, config, uri, relation, objects, recipe_items, res
 
 
 def parse_uri(config, item, default=None, default_ns=None, system_ns=None):
-    """Convert a string to a URIRef.
+    """Convert a string to a URIRef, as `Prefixes.split` reads it.
 
-    The prefix is everything before the *first* colon, as in Turtle and as the
-    standalone loader reads it (``sphinx_probs_rdf.identifiers``). A blank prefix or
-    bare id refers to `default_ns` if given, else to `system_ns` -- the namespace the
-    current file's front matter gives its bare names -- else to the namespace given by
-    the `probs_rdf_system_prefix` config variable. Object/process names always want one
+    A blank prefix or bare id refers to `default_ns` if given, else to `system_ns` --
+    the namespace set by ``system:prefix`` -- else to the namespace given by the
+    `probs_rdf_system_prefix` config variable. Object/process names always want one
     of the latter two, but :basis:'s objectMetric passes its own `default_ns`
     (`probs_rdf_basis_prefix`) so a bare basis name doesn't land in the same namespace
     as real objects/processes.
 
-    A missing suffix means the same as the object currently being defined.
-
+    A missing suffix means `default`, the local name of the object being defined.
     """
-    item = item.strip()
-    if item and item[0] == "<" and item[-1] == ">":
-        return URIRef(item[1:-1])
-    prefixes = config_prefixes(config)
-    prefix, colon, item_id = item.partition(":")
-    if not colon:
-        prefix, item_id = "", item
-    if prefix:
-        ns = prefixes.namespace(prefix + ":")
-    elif default_ns is not None:
-        ns = str(default_ns)
-    elif system_ns is not None:
-        ns = system_ns
-    else:
-        ns = prefixes.default
-    if not item_id:
-        item_id = default if default is not None else ""
-    return URIRef(ns + item_id)
+    ns = default_ns if default_ns is not None else system_ns
+    return URIRef(
+        config_prefixes(config).expand(
+            item, default=None if ns is None else str(ns), default_local=default
+        )
+    )
 
 
 class Object(SystemObjectDescription):
@@ -635,9 +586,9 @@ class Object(SystemObjectDescription):
         g.add((uri, PROBS.objectName, Literal(label)))
 
         if "basis" in self.options:
-            # A basis is not a system identifier, so a file's own namespace never
-            # applies to it: without a basis prefix it falls back to the *project's*
-            # system prefix, as it always has.
+            # A basis is not a system identifier, so a namespace set by system:prefix
+            # never applies to it: without a basis prefix it falls back to the
+            # *project's* system prefix, as it always has.
             basis_ns = Namespace(
                 self.config.probs_rdf_basis_prefix
                 or self.config.probs_rdf_system_prefix
@@ -698,11 +649,9 @@ class Object(SystemObjectDescription):
         """
         signatures = self.get_signatures()
         assert len(signatures) == 1, "only assuming 1 signature can be given"
-        default_item_id = signatures[0]
-        _, colon, local = default_item_id.partition(":")
-        if colon and not default_item_id.startswith("<"):
-            default_item_id = local
-        return self.uri(item, default_item_id)
+        uri, namespace = self.split(signatures[0])
+        local = str(uri)[len(namespace):] if namespace is not None else None
+        return self.uri(item, local)
 
 
 class ObjectIndex(Index):
@@ -854,6 +803,7 @@ class SystemDomain(Domain):
         "object": Object,
         "object-equivalent-to": ObjectEquivalentTo,
         "parameter": Parameter,
+        "prefix": SystemPrefix,
     }
     indices = [ProcessIndex, ObjectIndex]
     initial_data: ClassVar[Dict[str, Any]] = {

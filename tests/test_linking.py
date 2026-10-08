@@ -2,14 +2,7 @@
 
 import pytest
 
-from sphinx_probs_rdf.linking import (
-    ALL,
-    LinkError,
-    ObjectOverride,
-    ProcessSelection,
-    RecipeSubstitution,
-    link_model,
-)
+from sphinx_probs_rdf.linking import ALL, LinkError, ProcessSelection, link_model
 from sphinx_probs_rdf.loader import parse_markdown
 
 US = "http://example.org/us/"
@@ -101,15 +94,12 @@ def library():
 
 
 RECIPES_MODEL = [
-    ProcessSelection("us:"),
+    ProcessSelection("us:", {"_:HotBandForSale": "us:HotBand"}),
     ProcessSelection("rec:"),
-    RecipeSubstitution(["us:SheetSale"], {"_:HotBandForSale": "us:HotBand"}),
 ]
 ALLOCATED_MODEL = [
-    ProcessSelection("us:"),
+    ProcessSelection("us:", {"_:HotBandForSale": "alloc:HotBandForSale"}),
     ProcessSelection("alloc:"),
-    RecipeSubstitution(["us:SheetSale"], {"_:HotBandForSale": "alloc:HotBandForSale"}),
-    ObjectOverride("us:HotBand", can_export=False),
 ]
 
 
@@ -134,13 +124,15 @@ def test_declared_parents_come_in_with_their_members(library):
     assert "Unused" not in model.objects
 
 
-def test_an_undeclared_parent_is_an_error_with_prefixes():
-    library = parse_markdown(
-        """
+PARENTS = """
 ```{system:object} Apples
 ---
-parent_object: Fruit
+parent_object: alloc:Fruit
 ---
+```
+
+```{system:process} alloc:Consumption
+:become_parent: true
 ```
 
 ```{system:process} Eat
@@ -149,39 +141,47 @@ consumes: |
   Apples = 1 kg
 ---
 ```
-""",
-        prefixes=PREFIXES,
-    )
-    with pytest.raises(LinkError, match="never declared; declare it"):
-        link_model(library, [ProcessSelection("us:")])
 
-
-def test_an_undeclared_parent_is_kept_when_identifiers_are_opaque():
-    library = parse_markdown(
-        """
-```{system:object} Apples
----
-parent_object: Fruit
----
-```
-
-```{system:process} Eat
----
-consumes: |
-  Apples = 1 kg
----
+```{end-sub-processes}
 ```
 """
+
+
+@pytest.mark.parametrize("prefixes", [None, PREFIXES])
+def test_parents_outside_the_model_are_kept_by_their_local_names(prefixes):
+    library = parse_markdown(PARENTS.replace("alloc:", ""), prefixes=prefixes)
+    model = link_model(library, [ProcessSelection(["Eat"])])
+    # Fruit is never declared; Consumption is, but is not selected.
+    assert model.objects["Apples"].parent == "Fruit"
+    assert model.processes["Eat"].parent == "Consumption"
+    assert "Fruit" not in model.objects
+    assert "Consumption" not in model.processes
+
+
+def test_a_parent_outside_the_model_that_clashes_is_kept_by_its_prefixed_name():
+    library = parse_markdown(
+        PARENTS
+        + "```{system:object} Fruit\n```\n"
+        + "```{system:process} Consumption\n---\n"
+        + "consumes: |\n  Fruit = 1 kg\n---\n```\n",
+        prefixes=PREFIXES,
     )
-    assert link_model(library, [ProcessSelection(ALL)]).objects["Apples"].parent == "Fruit"
+    model = link_model(library, [ProcessSelection("us:")])
+    assert model.objects["Apples"].parent == "alloc:Fruit"
+    assert model.processes["Eat"].parent == "alloc:Consumption"
 
 
 def test_the_other_alternative_links_with_its_own_wiring(library):
-    model = link_model(library, ALLOCATED_MODEL)
+    model = link_model(
+        library,
+        ALLOCATED_MODEL,
+        object_overrides={"us:HotBand": {"traded": (False, False)}},
+    )
     assert list(model.processes) == ["SheetSale", "HotStripMill", "HotBandDistribution"]
     assert [i.object_name for i in model.processes["SheetSale"].consumes] == [
         "HotBandForSale"
     ]
+    assert library.objects[US + "HotBand"].traded == (False, True)
     assert model.objects["HotBand"].traded == (False, False)
     assert model.objects["HotBandForSale"].namespace == ALLOCATED
 
@@ -189,49 +189,64 @@ def test_the_other_alternative_links_with_its_own_wiring(library):
 def test_a_namespace_selection_is_by_declaration_not_by_iri_prefix(library):
     # US is a string prefix of both alternatives' namespaces; selecting it must not
     # bring either in.
-    only_core = [p for p in library.processes.values() if p.namespace == US]
-    assert [p.local_name for p in only_core] == ["SheetSale"]
-    with pytest.raises(LinkError, match="placeholders left open"):
-        link_model(library, [ProcessSelection("us:")])
+    model = link_model(library, [RECIPES_MODEL[0]])
+    assert list(model.processes) == ["SheetSale"]
 
 
-def test_selecting_both_alternatives_is_a_name_clash(library):
-    with pytest.raises(LinkError, match="'HotStripMill'"):
+def test_clashing_local_names_are_disambiguated_by_prefix(library):
+    model = link_model(
+        library,
+        [ProcessSelection(ALL, {"_:HotBandForSale": "us:HotBand"})],
+    )
+    assert list(model.processes) == [
+        "SheetSale", "rec:HotStripMill", "alloc:HotStripMill", "HotBandDistribution"
+    ]
+
+
+def test_local_names_can_be_given(library):
+    model = link_model(
+        library,
+        RECIPES_MODEL,
+        local_names={"rec:HotStripMill": "Mill", "us:HotBand": "Band"},
+    )
+    assert list(model.processes) == ["SheetSale", "Mill"]
+    assert [i.object_name for i in model.processes["Mill"].produces] == [
+        "Band", "Scrap"
+    ]
+
+
+def test_a_given_local_name_takes_precedence_over_the_rule(library):
+    model = link_model(library, RECIPES_MODEL, local_names={"us:Sheet": "Scrap"})
+    assert model.objects["Scrap"].namespace == US
+    assert [i.object_name for i in model.processes["SheetSale"].produces] == ["Scrap"]
+    assert [i.object_name for i in model.processes["HotStripMill"].produces] == [
+        "HotBand", "us:Scrap"
+    ]
+
+
+def test_two_given_local_names_must_differ(library):
+    with pytest.raises(LinkError, match="both be called 'Same'"):
         link_model(
             library,
-            [ProcessSelection(ALL), RecipeSubstitution(
-                ["us:SheetSale"], {"_:HotBandForSale": "us:HotBand"}
-            )],
+            RECIPES_MODEL,
+            local_names={"us:Sheet": "Same", "us:Scrap": "Same"},
         )
 
 
-def test_a_namespace_scope_must_be_written_as_one(library):
-    with pytest.raises(LinkError, match="pass a list"):
-        link_model(library, [ProcessSelection("us")])
-
-
-def test_an_empty_namespace_hints_at_the_trailing_separator():
-    library = parse_markdown(
-        "```{system:process} ns:P\n```\n", prefixes={"ns": "http://example.org/ns/"}
-    )
-    with pytest.raises(LinkError, match="did you mean <http://example.org/ns/>"):
-        link_model(library, [ProcessSelection("<http://example.org/ns>")])
+def test_a_given_local_name_must_be_in_the_model(library):
+    with pytest.raises(LinkError, match="local_names: not in this model"):
+        link_model(library, RECIPES_MODEL, local_names={"us:Unused": "U"})
 
 
 def test_an_open_placeholder_is_an_error(library):
-    with pytest.raises(LinkError, match="us/SheetSale: _:HotBandForSale|SheetSale"):
+    with pytest.raises(LinkError, match="placeholders left open"):
         link_model(library, [ProcessSelection("us:"), ProcessSelection("rec:")])
 
 
-def test_a_substitution_can_cover_a_namespace(library):
+def test_a_remap_can_cover_a_namespace(library):
     model = link_model(
         library,
-        [
-            ProcessSelection("us:"),
-            ProcessSelection("alloc:"),
-            RecipeSubstitution("alloc:", {"us:Scrap": "us:Sheet"}),
-            RecipeSubstitution(["us:SheetSale"], {"_:HotBandForSale": "us:HotBand"}),
-        ],
+        [ProcessSelection("alloc:", {"us:Scrap": "us:Sheet"}), *ALLOCATED_MODEL],
     )
     for name in ("HotStripMill", "HotBandDistribution"):
         assert "Scrap" not in {i.object_name for i in model.processes[name].produces}
@@ -239,37 +254,49 @@ def test_a_substitution_can_cover_a_namespace(library):
     assert "Scrap" not in model.objects
 
 
-def test_a_substitution_that_matches_nothing_is_an_error(library):
-    with pytest.raises(LinkError, match="refers to '_:Nothing'"):
+def test_a_remap_can_be_scoped_to_one_process(library):
+    model = link_model(
+        library,
+        [
+            ProcessSelection("alloc:HotStripMill", {"us:Scrap": "us:Sheet"}),
+            *ALLOCATED_MODEL,
+        ],
+    )
+    assert [i.object_name for i in model.processes["HotStripMill"].produces] == [
+        "HotBand", "Sheet"
+    ]
+    assert [
+        i.object_name for i in model.processes["HotBandDistribution"].produces
+    ] == ["HotBandForSale", "Scrap"]
+
+
+def test_a_remap_that_matches_nothing_is_an_error(library):
+    with pytest.raises(LinkError, match="refers to 'us:Nothing'"):
         link_model(
             library,
-            RECIPES_MODEL + [RecipeSubstitution(ALL, {"_:Nothing": "us:HotBand"})],
+            RECIPES_MODEL + [ProcessSelection(ALL, {"us:Nothing": "us:HotBand"})],
         )
 
 
-def test_overlapping_substitutions_are_an_error(library):
-    with pytest.raises(LinkError, match="give their scopes no overlap"):
+def test_two_remaps_of_one_reference_in_one_process_are_an_error(library):
+    with pytest.raises(LinkError, match="remapped to both"):
         link_model(
             library,
             RECIPES_MODEL
-            + [RecipeSubstitution(ALL, {"_:HotBandForSale": "us:Sheet"})],
+            + [ProcessSelection(["us:SheetSale"], {"_:HotBandForSale": "us:Sheet"})],
         )
 
 
-def test_a_listed_scope_must_be_selected(library):
-    with pytest.raises(LinkError, match="does not select"):
-        link_model(
-            library,
-            RECIPES_MODEL
-            + [RecipeSubstitution(["alloc:HotBandDistribution"], {"us:Scrap": "us:Sheet"})],
-        )
+def test_the_same_remap_twice_is_not_an_error(library):
+    link_model(library, RECIPES_MODEL + [RECIPES_MODEL[0]])
 
 
 def test_an_override_must_name_an_object_of_the_model(library):
     with pytest.raises(LinkError, match="not an object of this model"):
         link_model(
             library,
-            RECIPES_MODEL + [ObjectOverride("alloc:HotBandForSale", can_export=True)],
+            RECIPES_MODEL,
+            object_overrides={"alloc:HotBandForSale": {"traded": (False, True)}},
         )
 
 
@@ -277,22 +304,41 @@ def test_a_reference_to_an_undefined_object_is_an_error(library):
     with pytest.raises(LinkError, match="never defined"):
         link_model(
             library,
-            [
-                ProcessSelection("us:"),
-                RecipeSubstitution(["us:SheetSale"], {"_:HotBandForSale": "us:Nowhere"}),
-            ],
+            [ProcessSelection("us:", {"_:HotBandForSale": "us:Nowhere"})],
         )
 
 
-def test_a_full_iri_definition_has_no_local_name_to_link_under():
+@pytest.mark.parametrize(
+    "scope, message",
+    [
+        ("nope:", "unknown prefix 'nope'"),
+        ("us:Nothing", "no process 'us:Nothing'"),
+        (["us:SheetSale", "Nothing"], "no process 'Nothing'"),
+    ],
+)
+def test_a_scope_must_name_something(library, scope, message):
+    with pytest.raises(LinkError, match=message):
+        link_model(library, [ProcessSelection(scope)])
+
+
+def test_an_empty_namespace_is_an_error():
     library = parse_markdown(
-        "```{system:process} <http://example.org/P>\n```\n", prefixes=PREFIXES
+        "```{system:process} ns:P\n```\n",
+        prefixes={"ns": "http://example.org/ns/", "other": "http://example.org/o/"},
     )
-    with pytest.raises(LinkError, match="full IRI"):
-        link_model(library, [ProcessSelection(["<http://example.org/P>"])])
+    with pytest.raises(LinkError, match="no process is declared in namespace"):
+        link_model(library, [ProcessSelection("other:")])
 
 
-def test_opaque_definitions_link_to_themselves():
+def test_a_full_iri_definition_is_named_by_its_iri():
+    library = parse_markdown(
+        "```{system:process} <http://elsewhere.org/P>\n```\n", prefixes=PREFIXES
+    )
+    model = link_model(library, [ProcessSelection("<http://elsewhere.org/P>")])
+    assert list(model.processes) == ["<http://elsewhere.org/P>"]
+
+
+def test_a_library_without_prefixes_links_to_its_own_names():
     library = parse_markdown(
         """
 ```{system:object} Apples
@@ -310,3 +356,4 @@ consumes: |
     assert list(model.processes) == ["Eat"]
     assert list(model.objects) == ["Apples"]
     assert link_model(library, [ProcessSelection(":")]).processes.keys() == {"Eat"}
+    assert link_model(library, [ProcessSelection("Eat")]).processes.keys() == {"Eat"}

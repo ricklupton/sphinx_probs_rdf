@@ -1,36 +1,38 @@
-"""The loader with a prefix table: expansion, per-file namespaces, placeholders.
+"""The loader with a prefix table: expansion, ``system:prefix``, placeholders.
 
-Without a table (``prefixes=None``) identifiers stay exactly as written -- every other
-loader test runs that way, and ``test_opaque_mode_keeps_identifiers_as_written`` pins it.
+Without a table (``prefixes=None``) the default namespace is ``""``, so a bare name is
+its own identifier -- every other loader test runs that way.
 """
-
-import logging
 
 import pytest
 
 from sphinx_probs_rdf.identifiers import Prefixes
 from sphinx_probs_rdf.loader import parse_markdown, parse_system_definitions
-from sphinx_probs_rdf.validate import open_references, validate
+from sphinx_probs_rdf.validate import validate
 
 US = "http://example.org/us/"
 FRAG = "http://example.org/us-fragment/"
 PREFIXES = {"": US, "us": US, "frag": FRAG}
 
 
-def test_opaque_mode_keeps_identifiers_as_written():
+def test_without_a_table_a_bare_name_is_its_own_identifier():
     system = parse_markdown(
         """
-```{system:object} prefix:Crumble
+```{system:object} Crumble
 ```
 
 ```{system:object} :Blackberries
 ```
 """
     )
-    assert set(system.objects) == {"prefix:Crumble", ":Blackberries"}
-    assert system.prefixes is None
-    assert system.objects["prefix:Crumble"].namespace == ""
-    assert system.objects["prefix:Crumble"].local_name == "prefix:Crumble"
+    assert set(system.objects) == {"Crumble", "Blackberries"}
+    assert system.prefixes == {"": ""}
+    assert system.objects["Crumble"].namespace == ""
+
+
+def test_without_a_table_a_prefixed_name_is_an_error():
+    with pytest.raises(ValueError, match="unknown prefix 'prefix'"):
+        parse_markdown("```{system:object} prefix:Crumble\n```\n")
 
 
 def test_bare_and_prefixed_names_expand():
@@ -57,11 +59,8 @@ def test_bare_and_prefixed_names_expand():
         "http://elsewhere.org/Custard",
     }
     crumble = system.objects[FRAG + "Crumble"]
-    assert (crumble.namespace, crumble.local_name, crumble.label) == (
-        FRAG, "Crumble", "frag:Crumble"
-    )
-    custard = system.objects["http://elsewhere.org/Custard"]
-    assert (custard.namespace, custard.local_name) == (None, None)
+    assert (crumble.namespace, crumble.label) == (FRAG, "frag:Crumble")
+    assert system.objects["http://elsewhere.org/Custard"].namespace is None
 
 
 def test_every_reference_is_expanded():
@@ -138,7 +137,7 @@ balance: [mass]
     assert bake.balance == ["mass"]
 
 
-def test_front_matter_sets_the_namespace_of_one_file(tmp_path):
+def test_system_prefix_sets_the_namespace_of_the_rest_of_one_file(tmp_path):
     base = tmp_path / "base.md"
     base.write_text(
         """
@@ -148,9 +147,12 @@ def test_front_matter_sets_the_namespace_of_one_file(tmp_path):
     )
     fragment = tmp_path / "fragment.md"
     fragment.write_text(
-        """---
-system_prefix: frag
----
+        """
+```{system:object} Ore
+```
+
+```{system:prefix} frag
+```
 
 ```{system:process} Cast
 ---
@@ -163,11 +165,20 @@ produces: |
 
 ```{system:object} Slab
 ```
+
+```{system:prefix} :
+```
+
+```{system:object} Billet
+```
 """
     )
     after = tmp_path / "after.md"
     after.write_text(
         """
+```{system:prefix} frag
+```
+
 ```{system:object} Rolled
 ```
 """
@@ -175,19 +186,30 @@ produces: |
     system = parse_system_definitions(
         [base, fragment, after], prefixes=PREFIXES, validate=False
     )
-    assert set(system.objects) == {US + "Steel", FRAG + "Slab", US + "Rolled"}
+    assert set(system.objects) == {
+        US + "Steel", US + "Ore", FRAG + "Slab", US + "Billet", FRAG + "Rolled"
+    }
     cast = system.processes[FRAG + "Cast"]
     assert cast.namespace == FRAG
     assert [i.object_name for i in cast.consumes] == [US + "Steel"]
     assert [i.object_name for i in cast.produces] == [FRAG + "Slab"]
 
 
+def test_system_prefix_does_not_carry_over_to_the_next_file(tmp_path):
+    first = tmp_path / "first.md"
+    first.write_text("```{system:prefix} frag\n```\n")
+    second = tmp_path / "second.md"
+    second.write_text("```{system:object} Steel\n```\n")
+    system = parse_system_definitions([first, second], prefixes=PREFIXES)
+    assert set(system.objects) == {US + "Steel"}
+
+
 @pytest.mark.parametrize("spec", ["frag", "frag:", f"<{FRAG}>"])
-def test_front_matter_names_a_namespace_by_prefix_or_iri(spec):
+def test_system_prefix_names_a_namespace_by_prefix_or_iri(spec):
     system = parse_markdown(
-        f"""---
-system_prefix: "{spec}"
----
+        f"""
+```{{system:prefix}} {spec}
+```
 
 ```{{system:object}} Slab
 ```
@@ -197,9 +219,9 @@ system_prefix: "{spec}"
     assert set(system.objects) == {FRAG + "Slab"}
 
 
-def test_front_matter_needs_a_prefix_table():
-    with pytest.raises(ValueError, match="needs a prefix table"):
-        parse_markdown("---\nsystem_prefix: frag\n---\n")
+def test_system_prefix_must_name_a_declared_prefix():
+    with pytest.raises(ValueError, match="unknown prefix 'frag'"):
+        parse_markdown("```{system:prefix} frag\n```\n")
 
 
 def test_an_unknown_prefix_is_an_error():
@@ -252,7 +274,7 @@ def test_the_same_local_name_in_two_namespaces_is_two_definitions():
         prefixes=PREFIXES,
     )
     assert set(system.processes) == {US + "Cast", FRAG + "Cast"}
-    assert {p.local_name for p in system.processes.values()} == {"Cast"}
+    assert {p.namespace for p in system.processes.values()} == {US, FRAG}
 
 
 def test_nesting_stacks_hold_expanded_identifiers():
@@ -300,7 +322,6 @@ def test_a_placeholder_is_an_open_reference_not_an_undeclared_object(prefixes):
     assert sale.per["object"] == "_:HotBand"
     assert sale.placeholders() == ["_:HotBand"]
     assert validate(system) == []
-    assert open_references(system) == [f"{sale.name}: _:HotBand"]
 
 
 @pytest.mark.parametrize(
@@ -324,13 +345,15 @@ def test_the_placeholder_prefix_is_reserved():
         Prefixes({"_": "http://example.org/"})
 
 
-def test_a_namespace_without_a_separator_warns(caplog):
-    with caplog.at_level(logging.WARNING):
-        Prefixes({"us": "http://example.org/us"})
-    assert "ends in neither" in caplog.text
-
-
 def test_compact_uses_the_longest_matching_prefix():
     prefixes = Prefixes({"": US, "us": US, "deep": US + "deep/"})
     assert prefixes.compact(US + "deep/Thing") == "deep:Thing"
+    assert prefixes.compact(US + "Thing") == "us:Thing"
+    assert prefixes.compact("http://elsewhere.org/X") == "<http://elsewhere.org/X>"
+    assert Prefixes({"": US}).compact(US + "Thing") == ":Thing"
+
+
+def test_compact_without_a_default_namespace():
+    prefixes = Prefixes()
+    assert prefixes.compact("Thing") == "Thing"
     assert prefixes.compact("http://elsewhere.org/X") == "<http://elsewhere.org/X>"

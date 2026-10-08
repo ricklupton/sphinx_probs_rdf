@@ -1,8 +1,7 @@
----
-system_prefix: frag
----
-
 ## Casting, one reading
+
+```{system:prefix} frag
+```
 
 ```{system:object} Slab
 ---
