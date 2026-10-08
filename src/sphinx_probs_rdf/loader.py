@@ -1,8 +1,10 @@
 """Parse ``system:process`` / ``system:object`` / ``system:parameter`` MyST directive
 fences directly into a :class:`sphinx_probs_rdf.model.ParsedSystem`.
 
-Identifiers are opaque strings, exactly as written, unlike the Sphinx/RDF path's
-``parse_uri``. A consumer wanting namespace resolution should apply this itself.
+Identifiers are plain strings. Without a prefix table (``prefixes=None``, the default)
+they are exactly as written; with one, every system identifier is expanded the way the
+Sphinx/RDF path expands it, and a file's front matter can set the namespace its bare
+names belong to (``system_prefix:``). See :mod:`sphinx_probs_rdf.identifiers`.
 
 Security
 --------
@@ -16,7 +18,11 @@ import logging
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union
+from typing import (
+    Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union,
+)
+
+import yaml
 
 from docutils.parsers.rst import Directive
 from markdown_it.renderer import RendererHTML
@@ -26,6 +32,7 @@ from myst_parser.parsers.directives import parse_directive_text
 from myst_parser.parsers.mdit import create_md_parser
 
 from . import grammar
+from .identifiers import Name, Prefixes, is_placeholder
 from .model import (
     FactorSpec,
     ObjectDef,
@@ -102,10 +109,30 @@ def _directive_fences(
         yield name.strip(), argument.strip(), token
 
 
+#: The front-matter key that sets the namespace of a file's bare names.
+SYSTEM_PREFIX_KEY = "system_prefix"
+
+
+def _front_matter(text: str, md_config: MdParserConfig) -> Dict[str, Any]:
+    """The YAML front matter of `text`, or ``{}``."""
+    md = create_md_parser(md_config, RendererHTML)
+    tokens = md.parse(text)
+    if not tokens or tokens[0].type != "front_matter":
+        return {}
+    data = yaml.safe_load(tokens[0].content) or {}
+    return data if isinstance(data, dict) else {}
+
+
 def _recipe_items(
-    raw_items: Iterable[Any], units: UnitTable, context: str
+    raw_items: Iterable[Any],
+    units: UnitTable,
+    context: str,
+    expand: Callable[[str], str] = lambda name: name,
 ) -> List[RecipeItem]:
-    """Convert `grammar.parse_consumes_or_produces`-parsed items into `RecipeItem`s."""
+    """Convert `grammar.parse_consumes_or_produces`-parsed items into `RecipeItem`s.
+
+    `expand` turns each object reference into its identifier.
+    """
     items = []
     for raw in raw_items:
         if not isinstance(raw, dict):
@@ -126,7 +153,7 @@ def _recipe_items(
             )
         items.append(
             RecipeItem(
-                object_name=raw["object"],
+                object_name=expand(str(raw["object"])),
                 amount=float(amount) if amount is not None else None,
                 unit=unit,
                 extra=extra,
@@ -178,18 +205,52 @@ class _Parser:
     ``:become_parent:``.
     """
 
-    def __init__(self, units: UnitTable, md_config: MdParserConfig) -> None:
+    def __init__(
+        self, units: UnitTable, md_config: MdParserConfig, prefixes: Prefixes
+    ) -> None:
         self.units = units
         self.md_config = md_config
+        self.prefixes = prefixes
         self.system = ParsedSystem(
-            objects={}, processes={}, parameters={}, units=units
+            objects={}, processes={}, parameters={}, units=units,
+            prefixes=prefixes.table,
         )
         self.stacks: Dict[str, List[str]] = {
             PROCESS_DIRECTIVE: [], OBJECT_DIRECTIVE: []
         }
+        #: The namespace of bare names in the file being parsed.
+        self.default_ns = prefixes.default
 
     def parse_file(self, path: Path) -> None:
-        self._walk(path.read_text(), origin=path.name, line_offset=0)
+        self.parse_text(path.read_text(), origin=path.name)
+
+    def parse_text(self, text: str, origin: str) -> None:
+        front = _front_matter(text, self.md_config)
+        spec = front.get(SYSTEM_PREFIX_KEY)
+        if spec is None:
+            self.default_ns = self.prefixes.default
+        else:
+            self.default_ns = self.prefixes.namespace(
+                str(spec), context=f"{origin} front matter {SYSTEM_PREFIX_KEY!r}"
+            )
+        self._walk(text, origin=origin, line_offset=0)
+
+    def _expand(self, value: str, where: str, *, placeholder_ok: bool = False) -> str:
+        """`value`'s identifier, read with this file's default namespace."""
+        if is_placeholder(value.strip()) and not placeholder_ok:
+            raise ValueError(
+                f"{where}: placeholder {value!r} can only stand for an object a "
+                "process consumes or produces"
+            )
+        return self._record(
+            self.prefixes.split(value, default=self.default_ns, context=where)
+        )
+
+    def _record(self, name: Name) -> str:
+        """Note the local name `name` was written with; return its identifier."""
+        if name.local is not None:
+            self.system.local_names.setdefault(name.identifier, set()).add(name.local)
+        return name.identifier
 
     def _walk(self, text: str, origin: str, line_offset: int) -> None:
         for name, argument, token in _directive_fences(text, self.md_config):
@@ -258,17 +319,30 @@ class _Parser:
         for warning in parsed.warnings:
             log.warning("%s: %s", where, warning.msg)
 
-        key = argument
+        if is_placeholder(argument):
+            raise ValueError(f"{where}: a placeholder ({argument!r}) cannot be defined")
+        declared = self.prefixes.split(argument, default=self.default_ns, context=where)
+        key = self._record(declared)
         stack = self.stacks[name]
         parent_option = "parent" if is_process else "parent_object"
-        parent = parsed.options.get(parent_option) or (stack[-1] if stack else None)
+        parent_raw = parsed.options.get(parent_option)
+        parent = (
+            self._expand(parent_raw, where)
+            if parent_raw
+            else (stack[-1] if stack else None)
+        )
 
         composed_of_raw = parsed.options.get("composed_of", [])
-        composed_of = [c for c in composed_of_raw if not c.startswith("*")]
-        composed_of_children_of = [
-            c[1:] for c in composed_of_raw if c.startswith("*")
+        composed_of = [
+            self._expand(c, where) for c in composed_of_raw if not c.startswith("*")
         ]
-        label = parsed.options.get("label") or key
+        composed_of_children_of = [
+            self._expand(c[1:], where) for c in composed_of_raw if c.startswith("*")
+        ]
+        label = parsed.options.get("label") or argument
+
+        def expand_item(value: str) -> str:
+            return self._expand(value, where, placeholder_ok=True)
 
         definition: Union[ObjectDef, ProcessDef]
         if is_process:
@@ -285,11 +359,13 @@ class _Parser:
                 composed_of=composed_of,
                 composed_of_children_of=composed_of_children_of,
                 source=where,
-                consumes=_recipe_items(consumes, self.units, where),
-                produces=_recipe_items(produces, self.units, where),
-                per=parsed.options.get("per"),
+                consumes=_recipe_items(consumes, self.units, where, expand_item),
+                produces=_recipe_items(produces, self.units, where, expand_item),
+                per=self._per(parsed.options.get("per"), where),
                 balance=parsed.options.get("balance"),
                 extra=parsed.options.get("extra") or {},
+                namespace=declared.namespace,
+                local_name=declared.local,
             )
         else:
             registry = self.system.objects
@@ -301,16 +377,21 @@ class _Parser:
                 composed_of_children_of=composed_of_children_of,
                 source=where,
                 traded=parsed.options.get("traded"),
-                equivalent_to=parsed.options.get("equivalent", []),
+                equivalent_to=[
+                    self._equivalent(e, declared.local, where)
+                    for e in parsed.options.get("equivalent", [])
+                ],
                 basis=parsed.options.get("basis"),
                 factors=_factor_specs(parsed.options.get("factors", {}), where),
                 extra=parsed.options.get("extra") or {},
+                namespace=declared.namespace,
+                local_name=declared.local,
             )
 
         if key in registry:
-            log.warning(
-                "%s: %s %r redefined (first defined at %s)",
-                where, name, key, registry[key].source,
+            raise ValueError(
+                f"{where}: {name} {self.prefixes.compact(key)!r} is already defined "
+                f"at {registry[key].source}"
             )
         registry[key] = definition
 
@@ -326,6 +407,25 @@ class _Parser:
             )
         if "become_parent" not in parsed.options:
             stack.pop()
+
+    def _per(self, per: Any, where: str) -> Any:
+        """``per:`` with its object, if it names one, read as an identifier."""
+        if isinstance(per, dict) and isinstance(per.get("object"), str):
+            return {**per, "object": self._expand(per["object"], where,
+                                                  placeholder_ok=True)}
+        return per
+
+    def _equivalent(self, value: str, local: Optional[str], where: str) -> str:
+        """An ``:equivalent:`` entry; ``prefix:`` alone means this object's own name
+        in that namespace, as on the Sphinx path."""
+        if (
+            not self.prefixes.opaque
+            and value.endswith(":")
+            and local is not None
+            and not value.startswith("<")
+        ):
+            value = value + local
+        return self._expand(value, where)
 
     def finish(self) -> ParsedSystem:
         for kind, stack in self.stacks.items():
@@ -392,6 +492,7 @@ def parse_system_definitions(
     units: UnitTable = DEFAULT_UNITS,
     md_config: Optional[MdParserConfig] = None,
     validate: bool = True,
+    prefixes: Optional[Mapping[str, str]] = None,
 ) -> ParsedSystem:
     """Parse `paths` (MyST markdown) into a `ParsedSystem`.
 
@@ -399,13 +500,19 @@ def parse_system_definitions(
     nesting stacks are shared across them, matching Sphinx's per-project
     ``ref_context``.
 
+    `prefixes` is the prefix table (``{"": default namespace, name: namespace, ...}``),
+    the counterpart of ``probs_rdf_system_prefix`` and ``probs_rdf_extra_prefixes`` on
+    the Sphinx path. Without one, identifiers are used exactly as written. A file whose
+    front matter sets ``system_prefix: name`` (or ``<iri>``) puts its bare names in that
+    namespace instead of the default one. The same identifier defined twice is an error.
+
     Every object's basis is resolved, raising a ValueError on inconsistencies.
 
     If `validate` (the default), structural problems found by
     :func:`sphinx_probs_rdf.validate.validate` are logged as warnings -- call
     ``validate()`` yourself for the list of problem strings.
     """
-    parser = _Parser(units, md_config or DEFAULT_MD_CONFIG)
+    parser = _Parser(units, md_config or DEFAULT_MD_CONFIG, Prefixes(prefixes))
     for path in paths:
         parser.parse_file(Path(path))
     system = parser.finish()
@@ -422,14 +529,16 @@ def parse_markdown(
     origin: str = "<string>",
     units: UnitTable = DEFAULT_UNITS,
     md_config: Optional[MdParserConfig] = None,
+    prefixes: Optional[Mapping[str, str]] = None,
 ) -> ParsedSystem:
     """Parse MyST markdown `text` into a `ParsedSystem`.
 
     Unlike `parse_system_definitions`/`load_system`, does not automatically run
-    `validate` -- call it yourself if required.
+    `validate` -- call it yourself if required. `prefixes` is as for
+    `parse_system_definitions`.
     """
-    parser = _Parser(units, md_config or DEFAULT_MD_CONFIG)
-    parser._walk(text, origin=origin, line_offset=0)
+    parser = _Parser(units, md_config or DEFAULT_MD_CONFIG, Prefixes(prefixes))
+    parser.parse_text(text, origin=origin)
     system = parser.finish()
     _infer_object_bases(system)
     return system

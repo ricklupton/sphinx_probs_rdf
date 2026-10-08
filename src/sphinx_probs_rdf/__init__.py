@@ -17,6 +17,14 @@ from .directives import (
     ObjectEquivalentTo,
 )
 from .resolve import ProbsTransform
+from .linking import (  # noqa: F401
+    ALL,
+    LinkError,
+    ObjectOverride,
+    ProcessSelection,
+    RecipeSubstitution,
+    link_model,
+)
 
 try:
     # Only available with the `loader` extra (myst-parser, markdown-it-py); a plain
